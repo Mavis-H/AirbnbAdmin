@@ -49,9 +49,12 @@ function insertTask(
   type: TaskType
 ) {
   const existing = db
-    .prepare('SELECT id FROM task WHERE booking_id = ? AND type = ? AND override = 0')
+    .prepare('SELECT id FROM task WHERE booking_id = ? AND type = ?')
     .get(bookingId, type);
 
+  // Skip if a task of this type already exists — whether auto-generated or
+  // manually reassigned (override=1). This is what makes a manual assignment
+  // survive re-syncs instead of getting a duplicate auto task created next to it.
   if (existing) return;
 
   db.prepare(`
@@ -95,7 +98,9 @@ export function generateTasksForBooking(bookingId: number) {
   // Five-star review → admin, on checkout day
   insertTask(bookingId, adminPerson.id, checkoutDate, 'five_star_review');
 
-  // lock_code_change → admin, on checkout day, only if there is a next booking
+  // Admin prep tasks for the NEXT guest → on checkout day, only if there is a next booking.
+  // lock_code_change (set temp code) and fill_booking_info (enter guest name/notes) always
+  // pair together — both target the upcoming booking.
   const nextBooking = db.prepare(`
     SELECT id FROM booking
     WHERE property_id = ? AND checkin_at > ?
@@ -105,15 +110,17 @@ export function generateTasksForBooking(bookingId: number) {
 
   if (nextBooking) {
     insertTask(nextBooking.id, adminPerson.id, checkoutDate, 'lock_code_change');
+    insertTask(nextBooking.id, adminPerson.id, checkoutDate, 'fill_booking_info');
   }
 
   // --- Check-in day tasks (admin only) ---
   insertTask(bookingId, adminPerson.id, checkinDate, 'checkin_checklist');
 }
 
-// Called by sync when a brand-new booking is detected — reminds admin to set up
-// the temp code immediately (today), but only if no lock_code_change task exists yet.
-export function createLockCodeTaskForNewBooking(bookingId: number, todayDate: string) {
+// Called by sync when a brand-new booking is detected — reminds admin (dated today) to
+// set up the temp code and fill in the booking's guest name / notes. Deduped, so it's a
+// no-op if these tasks already exist.
+export function createNewBookingAdminTasks(bookingId: number, todayDate: string) {
   const adminPerson = db
     .prepare("SELECT id FROM person WHERE role = 'admin' LIMIT 1")
     .get() as Person | undefined;
@@ -121,6 +128,7 @@ export function createLockCodeTaskForNewBooking(bookingId: number, todayDate: st
   if (!adminPerson) return;
 
   insertTask(bookingId, adminPerson.id, todayDate, 'lock_code_change');
+  insertTask(bookingId, adminPerson.id, todayDate, 'fill_booking_info');
 }
 
 export function generateAllTasks() {

@@ -1,5 +1,6 @@
 export const TASK_LABELS: Record<string, string> = {
   lock_code_change:  'Set Temp Lock Code',
+  fill_booking_info: 'Fill In Booking Info',
   lockbox_return:    'Return Keys to Lockbox',
   battery_swap:      'Swap Smart-Lock Batteries',
   clean:             'Clean Unit',

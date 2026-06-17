@@ -1,9 +1,11 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { get } from '../lib/api';
+  import { get, patch } from '../lib/api';
   import { taskLabel } from '../lib/taskLabels';
+  import { formatShort } from '../lib/format';
 
   interface Person { id: number; name: string; role: string; }
+  interface Property { id: number; name: string; }
   interface Task {
     id: number; date: string; type: string; status: string; override: number;
     booking_id: number;
@@ -13,24 +15,21 @@
   }
 
   let persons: Person[] = [];
+  let properties: Property[] = [];
   let tasks: Task[] = [];
   let selectedAssignee = '';
-  let weekStart = getMondayStr(new Date());
+  let selectedProperty = '';
+  // Members see a rolling 7-day window starting today — no week-switching needed.
+  let weekStart = new Date().toISOString().slice(0, 10);
   let loading = true;
   let error = '';
 
   $: groupedByDay = groupTasks(tasks);
 
-  function getMondayStr(d: Date): string {
-    const day = d.getUTCDay();
-    const diff = day === 0 ? -6 : 1 - day;
-    const m = new Date(d);
-    m.setUTCDate(m.getUTCDate() + diff);
-    return m.toISOString().slice(0, 10);
-  }
-
   function addDays(s: string, n: number): string {
-    const d = new Date(s);
+    if (!s) return '';
+    const d = new Date(s + 'T00:00:00Z');
+    if (isNaN(d.getTime())) return '';
     d.setUTCDate(d.getUTCDate() + n);
     return d.toISOString().slice(0, 10);
   }
@@ -61,6 +60,7 @@
     try {
       const params = new URLSearchParams({ week: weekStart });
       if (selectedAssignee) params.set('assignee', selectedAssignee);
+      if (selectedProperty) params.set('property', selectedProperty);
       tasks = await get<Task[]>(`/api/plan?${params}`);
     } catch (e: any) {
       error = e.message;
@@ -69,8 +69,24 @@
     }
   }
 
+  async function toggleDone(task: Task) {
+    const next = task.status === 'done' ? 'pending' : 'done';
+    // Optimistic update so the card responds instantly
+    tasks = tasks.map((t) => (t.id === task.id ? { ...t, status: next } : t));
+    try {
+      await patch(`/api/admin/tasks/${task.id}`, { status: next });
+    } catch (e: any) {
+      // Roll back on failure
+      tasks = tasks.map((t) => (t.id === task.id ? { ...t, status: task.status } : t));
+      error = e.message;
+    }
+  }
+
   onMount(async () => {
-    persons = await get<Person[]>('/api/persons');
+    [persons, properties] = await Promise.all([
+      get<Person[]>('/api/persons'),
+      get<Property[]>('/api/properties'),
+    ]);
     await loadTasks();
   });
 </script>
@@ -78,16 +94,26 @@
 <div class="plan">
   <div class="toolbar">
     <div class="week-nav">
-      <button on:click={() => shiftWeek(-1)}>‹ Prev</button>
-      <span class="week-label">{weekStart} – {addDays(weekStart, 6)}</span>
-      <button on:click={() => shiftWeek(1)}>Next ›</button>
+      <button on:click={() => shiftWeek(-1)} title="Previous 7 days">‹</button>
+      <span class="week-label">{formatShort(weekStart)} – {formatShort(addDays(weekStart, 6))}</span>
+      <button on:click={() => shiftWeek(1)} title="Next 7 days">›</button>
     </div>
-    <select bind:value={selectedAssignee} on:change={loadTasks}>
-      <option value="">All assignees</option>
-      {#each persons as p}
-        <option value={String(p.id)}>{p.name}</option>
-      {/each}
-    </select>
+    <div class="filters">
+      <select bind:value={selectedAssignee} on:change={loadTasks}>
+        <option value="">All assignees</option>
+        {#each persons as p}
+          <option value={String(p.id)}>{p.name}</option>
+        {/each}
+      </select>
+      {#if properties.length > 1}
+        <select bind:value={selectedProperty} on:change={loadTasks}>
+          <option value="">All properties</option>
+          {#each properties as p}
+            <option value={String(p.id)}>{p.name}</option>
+          {/each}
+        </select>
+      {/if}
+    </div>
   </div>
 
   {#if loading}
@@ -103,8 +129,15 @@
         {#each dayTasks as task}
           <div class="task-card" class:done={task.status === 'done'}>
             <div class="task-top">
+              <button
+                class="check"
+                class:checked={task.status === 'done'}
+                title={task.status === 'done' ? 'Mark as not done' : 'Mark as done'}
+                on:click={() => toggleDone(task)}
+              >
+                {task.status === 'done' ? '✓' : ''}
+              </button>
               <span class="task-type">{taskLabel(task.type)}</span>
-              <span class="badge {task.status}">{task.status}</span>
             </div>
             <div class="task-meta">
               <span class="property">{task.property_name}</span>
@@ -131,14 +164,15 @@
 
   .toolbar {
     display: flex; flex-wrap: wrap; gap: 0.75rem;
-    align-items: center; margin-bottom: 1.25rem;
+    align-items: center; justify-content: space-between; margin-bottom: 1.25rem;
   }
-  .week-nav { display: flex; align-items: center; gap: 0.5rem; }
+  .week-nav { display: flex; align-items: center; gap: 0.5rem; flex-shrink: 0; }
   .week-nav button {
-    background: #eee; border: none; padding: 0.35rem 0.75rem;
-    border-radius: 6px; cursor: pointer; font-size: 0.95rem;
+    background: #eee; border: none; padding: 0.35rem 0.7rem;
+    border-radius: 6px; cursor: pointer; font-size: 1rem; line-height: 1;
   }
-  .week-label { font-weight: 600; font-size: 0.9rem; }
+  .week-label { font-weight: 600; font-size: 0.9rem; white-space: nowrap; min-width: 9rem; text-align: center; }
+  .filters { display: flex; gap: 0.5rem; flex-wrap: wrap; }
   select { padding: 0.35rem 0.6rem; border-radius: 6px; border: 1px solid #ccc; font-size: 0.95rem; }
 
   .day-group { margin-bottom: 1.5rem; }
@@ -156,15 +190,21 @@
   }
   .task-card.done { opacity: 0.5; }
 
-  .task-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.3rem; }
+  .task-top { display: flex; align-items: center; gap: 0.6rem; margin-bottom: 0.3rem; }
   .task-type { font-size: 1.05rem; font-weight: 600; }
+  .task-card.done .task-type { text-decoration: line-through; }
 
-  .badge {
-    font-size: 0.75rem; padding: 0.15rem 0.55rem;
-    border-radius: 12px; font-weight: 600; text-transform: uppercase;
+  .check {
+    flex-shrink: 0;
+    width: 26px; height: 26px;
+    border: 2px solid #ccc; border-radius: 50%;
+    background: white; cursor: pointer;
+    font-size: 0.9rem; font-weight: 700; line-height: 1;
+    color: white; display: flex; align-items: center; justify-content: center;
+    transition: background 0.15s, border-color 0.15s;
   }
-  .badge.pending { background: #FFF3CD; color: #856404; }
-  .badge.done { background: #D1FAE5; color: #065F46; }
+  .check.checked { background: #10B981; border-color: #10B981; }
+  .check:hover { border-color: #10B981; }
 
   .task-meta { font-size: 0.9rem; color: #666; display: flex; gap: 0.4rem; flex-wrap: wrap; margin-bottom: 0.2rem; }
   .property { font-weight: 500; }

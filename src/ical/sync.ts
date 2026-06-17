@@ -1,7 +1,7 @@
 import db from '../db/client.js';
 import { initSchema } from '../db/schema.js';
 import { parseIcalUrl, parseIcalFile } from './parser.js';
-import { generateTasksForBooking, createLockCodeTaskForNewBooking } from '../engine/logic.js';
+import { generateTasksForBooking, createNewBookingAdminTasks } from '../engine/logic.js';
 
 // Ensure tables exist whether this module is run standalone or via the server
 initSchema();
@@ -48,9 +48,9 @@ export async function syncProperty(propertyId: number, icalUrl: string, useFile 
       // Regenerate standard tasks for every booking
       generateTasksForBooking(row.id);
 
-      // For brand-new bookings: also create a lock_code_change task dated today
+      // For brand-new bookings: also create admin prep tasks (lock code + fill info) dated today
       if (isNew) {
-        createLockCodeTaskForNewBooking(row.id, todayDate);
+        createNewBookingAdminTasks(row.id, todayDate);
       }
     }
   });

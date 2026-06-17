@@ -2,9 +2,10 @@
   import { onMount } from 'svelte';
   import { get, patch, post, del } from '../lib/api';
   import { taskLabel } from '../lib/taskLabels';
+  import { formatDate, formatDateTime } from '../lib/format';
 
   interface Booking {
-    id: number; property_name: string; checkin_at: string; checkout_at: string;
+    id: number; property_id: number; property_name: string; checkin_at: string; checkout_at: string;
     guest_name: string | null; lock_code: string | null; notes: string | null;
   }
   interface Takeover {
@@ -12,6 +13,10 @@
     start_date: string; end_date: string; from_name: string; to_name: string;
   }
   interface Person { id: number; name: string; role: string; }
+  interface Property {
+    id: number; name: string; ical_url: string;
+    checkin_time: string; checkout_time: string; default_passcode: string | null;
+  }
   interface Task {
     id: number; date: string; type: string; status: string; assignee_id: number; assignee_name: string; override: number;
   }
@@ -19,28 +24,109 @@
   let bookings: Booking[] = [];
   let takeovers: Takeover[] = [];
   let persons: Person[] = [];
+  let properties: Property[] = [];
   let selectedBooking: Booking | null = null;
   let bookingTasks: Task[] = [];
 
-  // Edit state
+  // Booking list filter (chips by property)
+  let bookingPropFilter: number | null = null;
+  $: filteredBookings = bookingPropFilter == null
+    ? bookings
+    : bookings.filter((b) => b.property_id === bookingPropFilter);
+
+  // Property edit state
+  let syncingId: number | null = null;
+  let showNewProperty = false;
+  let newProp = { name: '', ical_url: '', checkin_time: '15:00:00', checkout_time: '11:00:00', default_passcode: '' };
+  let dirtyPropIds = new Set<number>();
+  let focusedPropId: number | null = null;
+  let propSavedFlashId: number | null = null;
+
+  // Booking edit state
   let editGuestName = '';
   let editLockCode = '';
   let editNotes = '';
   let saving = false;
+  let savedFlash = false;
+  let bookingFocused = false;
+  $: bookingDirty = !!selectedBooking && (
+    editGuestName !== (selectedBooking.guest_name ?? '') ||
+    editLockCode !== (selectedBooking.lock_code ?? '') ||
+    editNotes !== (selectedBooking.notes ?? '')
+  );
 
   // New takeover form
+  let showTakeoverForm = false;
   let toForm = { from_person_id: '', to_person_id: '', start_date: '', end_date: '' };
+
+  function markPropDirty(id: number) {
+    dirtyPropIds.add(id);
+    dirtyPropIds = dirtyPropIds;
+  }
+
+  function onPropFocusOut(e: FocusEvent, id: number) {
+    const card = e.currentTarget as HTMLElement;
+    if (!card.contains(e.relatedTarget as Node | null) && focusedPropId === id) {
+      focusedPropId = null;
+    }
+  }
+
+  function onBookingFocusOut(e: FocusEvent) {
+    const section = e.currentTarget as HTMLElement;
+    if (!section.contains(e.relatedTarget as Node | null)) bookingFocused = false;
+  }
 
   onMount(async () => {
     await reload();
   });
 
   async function reload() {
-    [bookings, takeovers, persons] = await Promise.all([
+    [bookings, takeovers, persons, properties] = await Promise.all([
       get<Booking[]>('/api/admin/bookings'),
       get<Takeover[]>('/api/admin/takeovers'),
       get<Person[]>('/api/persons'),
+      get<Property[]>('/api/admin/properties'),
     ]);
+  }
+
+  async function saveProperty(p: Property) {
+    await patch(`/api/admin/properties/${p.id}`, {
+      name: p.name,
+      ical_url: p.ical_url,
+      checkin_time: p.checkin_time,
+      checkout_time: p.checkout_time,
+      default_passcode: p.default_passcode || null,
+    });
+    dirtyPropIds.delete(p.id);
+    dirtyPropIds = dirtyPropIds;
+    await reload();
+    propSavedFlashId = p.id;
+    setTimeout(() => {
+      if (propSavedFlashId === p.id) propSavedFlashId = null;
+    }, 2000);
+  }
+
+  async function addProperty() {
+    await post('/api/admin/properties', {
+      name: newProp.name,
+      ical_url: newProp.ical_url,
+      checkin_time: newProp.checkin_time,
+      checkout_time: newProp.checkout_time,
+      default_passcode: newProp.default_passcode || null,
+    });
+    newProp = { name: '', ical_url: '', checkin_time: '15:00:00', checkout_time: '11:00:00', default_passcode: '' };
+    showNewProperty = false;
+    await reload();
+  }
+
+  async function syncProperty(id: number) {
+    syncingId = id;
+    try {
+      await post(`/api/admin/properties/${id}/sync`);
+      await reload();
+    } finally {
+      syncingId = null;
+    }
   }
 
   async function selectBooking(b: Booking) {
@@ -63,6 +149,13 @@
     await reload();
     selectedBooking = { ...selectedBooking, guest_name: editGuestName, lock_code: editLockCode, notes: editNotes };
     saving = false;
+    savedFlash = true;
+    setTimeout(() => (savedFlash = false), 2000);
+  }
+
+  function closeBooking() {
+    selectedBooking = null;
+    bookingTasks = [];
   }
 
   async function reassignTask(taskId: number, event: Event) {
@@ -79,6 +172,7 @@
       end_date: toForm.end_date,
     });
     toForm = { from_person_id: '', to_person_id: '', start_date: '', end_date: '' };
+    showTakeoverForm = false;
     takeovers = await get<Takeover[]>('/api/admin/takeovers');
   }
 
@@ -93,14 +187,26 @@
     <!-- Booking list -->
     <aside class="booking-list">
       <h2>Bookings</h2>
-      {#each bookings as b}
+      {#if properties.length > 1}
+        <div class="chips">
+          <button class="chip" class:active={bookingPropFilter == null} on:click={() => (bookingPropFilter = null)}>
+            All
+          </button>
+          {#each properties as p}
+            <button class="chip" class:active={bookingPropFilter === p.id} on:click={() => (bookingPropFilter = p.id)}>
+              {p.name}
+            </button>
+          {/each}
+        </div>
+      {/if}
+      {#each filteredBookings as b}
         <button
           class="booking-item"
           class:selected={selectedBooking?.id === b.id}
           on:click={() => selectBooking(b)}
         >
           <span class="prop">{b.property_name}</span>
-          <span class="dates">{b.checkin_at.slice(0,16)} → {b.checkout_at.slice(0,16)}</span>
+          <span class="dates">{formatDate(b.checkin_at)} → {formatDate(b.checkout_at)}</span>
           {#if b.guest_name}<span class="guest">{b.guest_name}</span>{/if}
         </button>
       {/each}
@@ -109,9 +215,21 @@
     <!-- Booking detail -->
     <main class="booking-detail">
       {#if selectedBooking}
-        <h2>{selectedBooking.property_name} · {selectedBooking.checkin_at.slice(0,10)}</h2>
+        <div class="detail-header">
+          <h2>
+            {selectedBooking.property_name}
+            <span class="stay-window">
+              {formatDateTime(selectedBooking.checkin_at)} → {formatDateTime(selectedBooking.checkout_at)}
+            </span>
+          </h2>
+          <button class="btn-close" title="Close" on:click={closeBooking}>✕</button>
+        </div>
 
-        <section class="form-section">
+        <section
+          class="form-section"
+          on:focusin={() => (bookingFocused = true)}
+          on:focusout={onBookingFocusOut}
+        >
           <label>Guest name
             <input bind:value={editGuestName} placeholder="Guest name" />
           </label>
@@ -121,9 +239,14 @@
           <label>Notes
             <textarea bind:value={editNotes} rows="3" placeholder="Any notes for this stay…" />
           </label>
-          <button class="btn-primary" on:click={saveBooking} disabled={saving}>
-            {saving ? 'Saving…' : 'Save'}
-          </button>
+          {#if bookingDirty || bookingFocused || savedFlash}
+            <div class="save-row">
+              <button class="btn-primary" on:click={saveBooking} disabled={saving || !bookingDirty}>
+                {saving ? 'Saving…' : 'Save'}
+              </button>
+              {#if savedFlash}<span class="saved-flash">Saved ✓</span>{/if}
+            </div>
+          {/if}
         </section>
 
         {#if bookingTasks.length > 0}
@@ -131,7 +254,7 @@
             <h3>Tasks</h3>
             {#each bookingTasks as t}
               <div class="task-row">
-                <span class="task-date">{t.date}</span>
+                <span class="task-date">{formatDate(t.date)}</span>
                 <span class="task-type">{taskLabel(t.type)}</span>
                 <select value={String(t.assignee_id)} on:change={(e) => reassignTask(t.id, e)}>
                   {#each persons as p}
@@ -160,22 +283,100 @@
       </div>
     {/each}
 
-    <div class="takeover-form">
-      <select bind:value={toForm.from_person_id}>
-        <option value="">From person…</option>
-        {#each persons as p}<option value={String(p.id)}>{p.name}</option>{/each}
-      </select>
-      <select bind:value={toForm.to_person_id}>
-        <option value="">To person…</option>
-        {#each persons as p}<option value={String(p.id)}>{p.name}</option>{/each}
-      </select>
-      <input type="date" bind:value={toForm.start_date} />
-      <input type="date" bind:value={toForm.end_date} />
-      <button class="btn-primary"
-        on:click={addTakeover}
-        disabled={!toForm.from_person_id || !toForm.to_person_id || !toForm.start_date || !toForm.end_date}
-      >Add</button>
-    </div>
+    {#if showTakeoverForm}
+      <div class="takeover-form">
+        <select bind:value={toForm.from_person_id}>
+          <option value="">From person…</option>
+          {#each persons as p}<option value={String(p.id)}>{p.name}</option>{/each}
+        </select>
+        <select bind:value={toForm.to_person_id}>
+          <option value="">To person…</option>
+          {#each persons as p}<option value={String(p.id)}>{p.name}</option>{/each}
+        </select>
+        <input type="date" bind:value={toForm.start_date} />
+        <input type="date" bind:value={toForm.end_date} />
+        <button class="btn-primary"
+          on:click={addTakeover}
+          disabled={!toForm.from_person_id || !toForm.to_person_id || !toForm.start_date || !toForm.end_date}
+        >Add</button>
+        <button class="btn-secondary" on:click={() => (showTakeoverForm = false)}>Cancel</button>
+      </div>
+    {:else}
+      <button class="btn-add" on:click={() => (showTakeoverForm = true)}>+ Add Takeover</button>
+    {/if}
+  </section>
+
+  <!-- Properties -->
+  <section class="property-section">
+    <h2>Properties</h2>
+    {#each properties as p (p.id)}
+      <div
+        class="property-card"
+        on:focusin={() => (focusedPropId = p.id)}
+        on:focusout={(e) => onPropFocusOut(e, p.id)}
+        on:input={() => markPropDirty(p.id)}
+      >
+        <div class="property-grid">
+          <label>Name
+            <input bind:value={p.name} />
+          </label>
+          <label>iCal URL
+            <input bind:value={p.ical_url} placeholder="https://www.airbnb.com/calendar/ical/…" />
+          </label>
+          <label>Check-in time
+            <input type="time" bind:value={p.checkin_time} />
+          </label>
+          <label>Check-out time
+            <input type="time" bind:value={p.checkout_time} />
+          </label>
+          <label>Default passcode (Eufy admin)
+            <input bind:value={p.default_passcode} placeholder="e.g. 135790" />
+          </label>
+        </div>
+        <div class="property-actions">
+          {#if dirtyPropIds.has(p.id) || focusedPropId === p.id || propSavedFlashId === p.id}
+            <button class="btn-primary" on:click={() => saveProperty(p)} disabled={!dirtyPropIds.has(p.id)}>
+              Save
+            </button>
+            {#if propSavedFlashId === p.id}<span class="saved-flash">Saved ✓</span>{/if}
+          {/if}
+          <button class="btn-secondary" on:click={() => syncProperty(p.id)} disabled={syncingId === p.id}>
+            {syncingId === p.id ? 'Syncing…' : 'Sync iCal'}
+          </button>
+        </div>
+      </div>
+    {/each}
+
+    {#if showNewProperty}
+      <h3>Add a property</h3>
+      <div class="property-card">
+        <div class="property-grid">
+          <label>Name
+            <input bind:value={newProp.name} placeholder="e.g. Seaside Cottage" />
+          </label>
+          <label>iCal URL
+            <input bind:value={newProp.ical_url} placeholder="https://www.airbnb.com/calendar/ical/…" />
+          </label>
+          <label>Check-in time
+            <input type="time" bind:value={newProp.checkin_time} />
+          </label>
+          <label>Check-out time
+            <input type="time" bind:value={newProp.checkout_time} />
+          </label>
+          <label>Default passcode (Eufy admin)
+            <input bind:value={newProp.default_passcode} placeholder="e.g. 135790" />
+          </label>
+        </div>
+        <div class="property-actions">
+          <button class="btn-primary" on:click={addProperty} disabled={!newProp.name || !newProp.ical_url}>
+            Add Property
+          </button>
+          <button class="btn-secondary" on:click={() => (showNewProperty = false)}>Cancel</button>
+        </div>
+      </div>
+    {:else}
+      <button class="btn-add" on:click={() => (showNewProperty = true)}>+ Add Property</button>
+    {/if}
   </section>
 </div>
 
@@ -186,6 +387,15 @@
 
   .booking-list { width: 240px; flex-shrink: 0; }
   .booking-list h2 { font-size: 1rem; margin-bottom: 0.5rem; color: #444; }
+
+  .chips { display: flex; flex-wrap: wrap; gap: 0.3rem; margin-bottom: 0.75rem; }
+  .chip {
+    background: #f0f0f0; border: 1px solid transparent; color: #555;
+    padding: 0.25rem 0.7rem; border-radius: 16px; cursor: pointer;
+    font-size: 0.8rem; font-weight: 500;
+  }
+  .chip.active { background: #FF5A5F; color: white; }
+  .chip:hover:not(.active) { background: #e5e5e5; }
 
   .booking-item {
     display: block; width: 100%; text-align: left;
@@ -198,8 +408,19 @@
   .booking-item .guest { display: block; font-size: 0.8rem; color: #555; }
 
   .booking-detail { flex: 1; }
-  .booking-detail h2 { font-size: 1.1rem; margin-bottom: 0.75rem; }
+  .detail-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 0.5rem; margin-bottom: 0.75rem; }
+  .booking-detail h2 { font-size: 1.1rem; }
+  .stay-window { display: block; font-size: 0.8rem; font-weight: 400; color: #888; margin-top: 0.2rem; }
+  .btn-close {
+    background: #f0f0f0; border: none; border-radius: 6px;
+    width: 28px; height: 28px; cursor: pointer; font-size: 0.9rem;
+    color: #666; flex-shrink: 0; line-height: 1;
+  }
+  .btn-close:hover { background: #e0e0e0; }
   .placeholder { color: #aaa; padding-top: 2rem; }
+
+  .save-row { display: flex; align-items: center; gap: 0.75rem; }
+  .saved-flash { color: #065F46; font-size: 0.85rem; font-weight: 600; }
 
   .form-section { display: flex; flex-direction: column; gap: 0.6rem; margin-bottom: 1.5rem; }
   label { display: flex; flex-direction: column; gap: 0.2rem; font-size: 0.85rem; color: #555; font-weight: 600; }
@@ -239,4 +460,30 @@
     border-radius: 6px; margin-bottom: 0.4rem;
   }
   .takeover-form { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 0.75rem; align-items: flex-end; }
+
+  .property-section { border-top: 1px solid #eee; padding-top: 1.5rem; margin-top: 2rem; }
+  .property-section h2 { font-size: 1rem; margin-bottom: 0.75rem; color: #444; }
+  .property-section h3 { font-size: 0.9rem; margin: 1.25rem 0 0.5rem; color: #666; }
+  .property-card {
+    background: white; border: 1px solid #e0e0e0; border-radius: 8px;
+    padding: 1rem; margin-bottom: 0.75rem;
+  }
+  .property-grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 0.6rem; margin-bottom: 0.75rem;
+  }
+  .property-actions { display: flex; gap: 0.5rem; }
+  .btn-secondary {
+    background: #f0f0f0; color: #444; border: none;
+    padding: 0.5rem 1rem; border-radius: 6px; cursor: pointer;
+    font-size: 0.95rem; font-weight: 600;
+  }
+  .btn-secondary:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .btn-add {
+    background: white; color: #FF5A5F; border: 1.5px dashed #FF5A5F;
+    padding: 0.5rem 1rem; border-radius: 6px; cursor: pointer;
+    font-size: 0.9rem; font-weight: 600; margin-top: 0.5rem;
+  }
+  .btn-add:hover { background: #fff5f5; }
 </style>

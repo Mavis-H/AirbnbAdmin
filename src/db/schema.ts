@@ -51,6 +51,7 @@ export function initSchema() {
 
 export type TaskType =
   | 'lock_code_change'
+  | 'fill_booking_info'
   | 'lockbox_return'
   | 'battery_swap'
   | 'clean'

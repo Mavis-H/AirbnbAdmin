@@ -13,6 +13,7 @@ interface TaskRow {
   guest_name: string | null;
   lock_code: string | null;
   notes: string | null;
+  property_id: number;
   property_name: string;
   assignee_id: number;
   assignee_name: string;
@@ -22,7 +23,7 @@ export async function planRoutes(app: FastifyInstance) {
   // GET /api/plan?week=YYYY-MM-DD&assignee=<id>
   // Returns tasks for the 7-day window starting on `week` (defaults to current Monday)
   app.get('/api/plan', (req, reply) => {
-    const query = req.query as { week?: string; assignee?: string };
+    const query = req.query as { week?: string; assignee?: string; property?: string };
 
     // Default to current ISO week Monday
     const weekStart = query.week ?? getMondayOf(new Date());
@@ -34,12 +35,18 @@ export async function planRoutes(app: FastifyInstance) {
       assigneeClause = 'AND t.assignee_id = ?';
       params.push(Number(query.assignee));
     }
+    let propertyClause = '';
+    if (query.property) {
+      propertyClause = 'AND b.property_id = ?';
+      params.push(Number(query.property));
+    }
 
     const rows = db.prepare(`
       SELECT
         t.id, t.date, t.type, t.status, t.override,
         t.booking_id, t.assignee_id,
         b.checkin_at, b.checkout_at, b.guest_name, b.lock_code, b.notes,
+        b.property_id,
         p.name AS property_name,
         per.name AS assignee_name
       FROM task t
@@ -48,6 +55,7 @@ export async function planRoutes(app: FastifyInstance) {
       JOIN person per ON per.id = t.assignee_id
       WHERE t.date BETWEEN ? AND ?
       ${assigneeClause}
+      ${propertyClause}
       ORDER BY t.date ASC, t.type ASC
     `).all(...params) as TaskRow[];
 
@@ -58,6 +66,12 @@ export async function planRoutes(app: FastifyInstance) {
   app.get('/api/persons', (_req, reply) => {
     const persons = db.prepare('SELECT id, name, role FROM person ORDER BY role ASC').all();
     reply.send(persons);
+  });
+
+  // GET /api/properties — for the admin property filter dropdown
+  app.get('/api/properties', (_req, reply) => {
+    const properties = db.prepare('SELECT id, name FROM property ORDER BY name ASC').all();
+    reply.send(properties);
   });
 }
 

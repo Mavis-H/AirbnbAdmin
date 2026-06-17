@@ -107,12 +107,53 @@ export async function adminRoutes(app: FastifyInstance) {
 
   // POST /api/admin/properties
   app.post('/api/admin/properties', (req, reply) => {
-    const body = req.body as { name: string; ical_url: string };
+    const body = req.body as {
+      name: string;
+      ical_url: string;
+      checkin_time?: string;
+      checkout_time?: string;
+      default_passcode?: string;
+    };
     const result = db.prepare(`
-      INSERT INTO property (name, ical_url)
-      VALUES (@name, @ical_url)
-    `).run(body);
+      INSERT INTO property (name, ical_url, checkin_time, checkout_time, default_passcode)
+      VALUES (@name, @ical_url, @checkin_time, @checkout_time, @default_passcode)
+    `).run({
+      checkin_time: '15:00:00',
+      checkout_time: '11:00:00',
+      default_passcode: null,
+      ...body,
+    });
     reply.send({ id: result.lastInsertRowid });
+  });
+
+  // PATCH /api/admin/properties/:id — edit property config
+  app.patch('/api/admin/properties/:id', (req, reply) => {
+    const { id } = req.params as { id: string };
+    const body = req.body as {
+      name?: string;
+      ical_url?: string;
+      checkin_time?: string;
+      checkout_time?: string;
+      default_passcode?: string;
+    };
+    db.prepare(`
+      UPDATE property
+      SET name             = COALESCE(@name, name),
+          ical_url         = COALESCE(@ical_url, ical_url),
+          checkin_time     = COALESCE(@checkin_time, checkin_time),
+          checkout_time    = COALESCE(@checkout_time, checkout_time),
+          default_passcode = COALESCE(@default_passcode, default_passcode)
+      WHERE id = @id
+    `).run({
+      id: Number(id),
+      name: null,
+      ical_url: null,
+      checkin_time: null,
+      checkout_time: null,
+      default_passcode: null,
+      ...body,
+    });
+    reply.send({ ok: true });
   });
 
   // POST /api/admin/properties/:id/sync — pull iCal and regenerate tasks
