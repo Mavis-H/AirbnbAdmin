@@ -28,6 +28,20 @@ Admin view ────┘                                          └──> W
 - **store**: SQLite, a single file is enough.
 - **This-week plan page**: the parents' only interface. PWA, "Add to Home Screen" so it behaves like an app. No login, large text, day-by-day cards.
 - **Admin view**: my own minimal forms (enter code/name/notes, set takeover periods, reassign tasks).
+
+### Routing & week window (no login — zero click)
+
+Role is decided by **URL path**, not a login (logins confuse the parents). Each person installs the PWA from their own URL, so their home-screen icon always reopens the right view:
+
+- **`/`** → member view (parents): the plan page only, no nav bar, nothing else to tap.
+- **`/admin`** → admin view (owner): keeps an internal tab toggle between **This Week** (the plan) and **Management** (the forms) — both live on this one route.
+
+The plan page's 7-day window is **anchored by role** (same `PlanView` component, `mode` prop):
+
+- **member** → rolling next-7-days anchored on **today** (Wed Jun 17 → Jun 17–23; opening it Thu → Jun 18–24). Slides daily.
+- **admin** → fixed **Monday–Sunday** calendar week (Jun 17 → Jun 15–21; ‹ › jumps Mon→Mon). Backend `getMondayOf` ([src/routes/plan.ts](src/routes/plan.ts)) provides the alignment.
+
+Deployment note: serving `/admin` directly (or on refresh) needs the prod server to fall back to `index.html` for unknown paths. Vite dev already does this; the Fastify static-serving fallback is a Phase 3 (deployment) task — the server doesn't serve the frontend yet.
 - **WeCom push**: one off-peak reminder per day to the parents. **Phase 1 uses a console stub — no real delivery yet (see below).**
 
 ---
@@ -110,6 +124,7 @@ Both roles can view the plan page (filterable by assignee). `is_app_user` flag r
      - On the **checkout date** of the preceding booking, if a next booking exists (so admin knows to create the temp code before next guest arrives)
      - On the **sync date (today)** when a new booking is first detected by the daily iCal pull
    - No next booking = no task (lock falls back to default passcode).
+   - Paired with each `lock_code_change` is a `fill_booking_info` task (assigned to admin): enter the upcoming booking's guest name / notes. Both are generated together in both scenarios above (preceding checkout date, and sync/detection date).
 2. **Lockbox**: return the mailbox key + spare door key to the lockbox (assigned to member).
 3. **Battery swap**: swap the smart-lock batteries on every checkout (assigned to member).
 4. **Clean**: clean the unit — how it gets done (self or hired) is the member's decision (assigned to member).
@@ -136,14 +151,14 @@ Both roles can view the plan page (filterable by assignee). `is_app_user` flag r
 
 ## Current Phase Scope (Phase 1 — fully local, zero deployment)
 
-### In scope this phase:
-- [ ] iCal parsing (support reading a local .ics file + a fixture set of fake data for testing)
-- [ ] Data model + SQLite table creation
-- [ ] Logic engine: gap computation, lock-code rule, task generation, assignee resolution (incl. takeover periods + manual override)
-- [ ] This-week plan page (read-only; grouped by day, filterable by assignee)
-- [ ] Admin view: enter a booking's code/name/notes, set takeover periods, reassign tasks per row
-- [ ] `sendNotification(person, message)` interface; this phase's implementation = print to console / log
-- [ ] PWA basics (manifest + service worker); service workers are allowed on `localhost` without HTTPS, so "Add to Home Screen" can be verified locally
+### In scope this phase (all implemented):
+- [x] iCal parsing (support reading a local .ics file + a fixture set of fake data for testing)
+- [x] Data model + SQLite table creation
+- [x] Logic engine: lock-code rule, task generation, assignee resolution (incl. takeover periods + manual override)
+- [x] This-week plan page (read-only; grouped by day, filterable by assignee)
+- [x] Admin view: enter a booking's code/name/notes, set takeover periods, reassign tasks per row
+- [x] `sendNotification(person, message)` interface; this phase's implementation = print to console / log
+- [x] PWA basics (manifest + service worker); service workers are allowed on `localhost` without HTTPS, so "Add to Home Screen" can be verified locally
 
 ### Out of scope this phase:
 - Real WeCom push (needs a public IP + trusted-IP whitelist — deferred to deployment)
@@ -174,11 +189,13 @@ Keep a clean boundary between the logic layer and real delivery. `sendNotificati
 
 ---
 
-## Open Decisions (to be finalized)
+## Open Decisions
+
+All Phase 1 decisions are resolved:
 
 1. ~~Backend language~~ → **Node.js + TypeScript + Fastify** ✓
 2. ~~Frontend framework~~ → **Svelte + Vite** ✓
 3. ~~Role naming~~ → **`admin` / `member`** ✓
-4. Full enum naming for `TASK.type`
-5. Random lock-code generation rule (length, charset, avoid ambiguous chars?)
-6. Exact look of the members' this-week plan page (card fields, information density, font sizes)
+4. ~~Full enum naming for `TASK.type`~~ → **`lock_code_change | fill_booking_info | lockbox_return | battery_swap | clean | inspect | check_supplies | five_star_review | checkin_checklist`** ✓
+5. ~~Random lock-code generation rule~~ → **dropped: `lock_code` is always manually entered by admin, never auto-generated** (see Business Logic) ✓
+6. ~~Exact look of the members' this-week plan page~~ → **implemented in PlanView (day-grouped cards, assignee filter)** ✓

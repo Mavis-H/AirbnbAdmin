@@ -23,7 +23,12 @@ export async function planRoutes(app: FastifyInstance) {
   // GET /api/plan?week=YYYY-MM-DD&assignee=<id>
   // Returns tasks for the 7-day window starting on `week` (defaults to current Monday)
   app.get('/api/plan', (req, reply) => {
-    const query = req.query as { week?: string; assignee?: string; property?: string };
+    const query = req.query as {
+      week?: string;
+      assignee?: string;
+      property?: string;
+      role?: string;
+    };
 
     // Default to current ISO week Monday
     const weekStart = query.week ?? getMondayOf(new Date());
@@ -39,6 +44,13 @@ export async function planRoutes(app: FastifyInstance) {
     if (query.property) {
       propertyClause = 'AND b.property_id = ?';
       params.push(Number(query.property));
+    }
+    // Member view requests role=member so parents only see their on-site tasks,
+    // not owner-only ones (five-star review, check-in checklist, lock-code change).
+    let roleClause = '';
+    if (query.role === 'member' || query.role === 'admin') {
+      roleClause = 'AND per.role = ?';
+      params.push(query.role);
     }
 
     const rows = db.prepare(`
@@ -56,6 +68,7 @@ export async function planRoutes(app: FastifyInstance) {
       WHERE t.date BETWEEN ? AND ?
       ${assigneeClause}
       ${propertyClause}
+      ${roleClause}
       ORDER BY t.date ASC, t.type ASC
     `).all(...params) as TaskRow[];
 

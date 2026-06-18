@@ -14,13 +14,32 @@
     checkin_at: string; checkout_at: string;
   }
 
+  // member → rolling 7-day window anchored on today (slides daily).
+  // admin  → fixed Monday–Sunday calendar week.
+  export let mode: 'member' | 'admin' = 'member';
+
+  function today(): string {
+    // NB: assign `new Date()` to a local before returning. Returning it directly
+    // (`return new Date()...`) lets esbuild's dev transform insert a `/* @__PURE__ */`
+    // annotation + newline after `return`, which ASI turns into `return;` → undefined.
+    const d = new Date();
+    return d.toISOString().slice(0, 10);
+  }
+
+  // Monday of the week containing `dateStr` (UTC), matching the backend's getMondayOf.
+  function getMonday(dateStr: string): string {
+    const d = new Date(dateStr + 'T00:00:00Z');
+    const day = d.getUTCDay();
+    d.setUTCDate(d.getUTCDate() + (day === 0 ? -6 : 1 - day));
+    return d.toISOString().slice(0, 10);
+  }
+
   let persons: Person[] = [];
   let properties: Property[] = [];
   let tasks: Task[] = [];
   let selectedAssignee = '';
   let selectedProperty = '';
-  // Members see a rolling 7-day window starting today — no week-switching needed.
-  let weekStart = new Date().toISOString().slice(0, 10);
+  let weekStart = mode === 'admin' ? getMonday(today()) : today();
   let loading = true;
   let error = '';
 
@@ -59,6 +78,8 @@
     loading = true; error = '';
     try {
       const params = new URLSearchParams({ week: weekStart });
+      // Member view shows only on-site (member) tasks; admin view can filter freely.
+      if (mode === 'member') params.set('role', 'member');
       if (selectedAssignee) params.set('assignee', selectedAssignee);
       if (selectedProperty) params.set('property', selectedProperty);
       tasks = await get<Task[]>(`/api/plan?${params}`);
@@ -83,38 +104,46 @@
   }
 
   onMount(async () => {
-    [persons, properties] = await Promise.all([
-      get<Person[]>('/api/persons'),
-      get<Property[]>('/api/properties'),
-    ]);
+    // Filter dropdowns are admin-only; members don't need this data.
+    if (mode === 'admin') {
+      [persons, properties] = await Promise.all([
+        get<Person[]>('/api/persons'),
+        get<Property[]>('/api/properties'),
+      ]);
+    }
     await loadTasks();
   });
 </script>
 
 <div class="plan">
-  <div class="toolbar">
-    <div class="week-nav">
-      <button on:click={() => shiftWeek(-1)} title="Previous 7 days">‹</button>
-      <span class="week-label">{formatShort(weekStart)} – {formatShort(addDays(weekStart, 6))}</span>
-      <button on:click={() => shiftWeek(1)} title="Next 7 days">›</button>
-    </div>
-    <div class="filters">
-      <select bind:value={selectedAssignee} on:change={loadTasks}>
-        <option value="">All assignees</option>
-        {#each persons as p}
-          <option value={String(p.id)}>{p.name}</option>
-        {/each}
-      </select>
-      {#if properties.length > 1}
-        <select bind:value={selectedProperty} on:change={loadTasks}>
-          <option value="">All properties</option>
-          {#each properties as p}
+  {#if mode === 'admin'}
+    <div class="toolbar">
+      <div class="week-nav">
+        <button on:click={() => shiftWeek(-1)} title="Previous 7 days">‹</button>
+        <span class="week-label">{formatShort(weekStart)} – {formatShort(addDays(weekStart, 6))}</span>
+        <button on:click={() => shiftWeek(1)} title="Next 7 days">›</button>
+      </div>
+      <div class="filters">
+        <select bind:value={selectedAssignee} on:change={loadTasks}>
+          <option value="">All assignees</option>
+          {#each persons as p}
             <option value={String(p.id)}>{p.name}</option>
           {/each}
         </select>
-      {/if}
+        {#if properties.length > 1}
+          <select bind:value={selectedProperty} on:change={loadTasks}>
+            <option value="">All properties</option>
+            {#each properties as p}
+              <option value={String(p.id)}>{p.name}</option>
+            {/each}
+          </select>
+        {/if}
+      </div>
     </div>
-  </div>
+  {:else}
+    <h1 class="member-title">This Week</h1>
+    <p class="member-range">{formatShort(weekStart)} – {formatShort(addDays(weekStart, 6))}</p>
+  {/if}
 
   {#if loading}
     <p class="msg">Loading…</p>
@@ -161,6 +190,9 @@
 
 <style>
   .plan { max-width: 680px; margin: 0 auto; padding: 1rem; }
+
+  .member-title { font-size: 1.6rem; font-weight: 800; margin: 0.25rem 0 0; color: #222; }
+  .member-range { font-size: 1rem; color: #777; margin: 0.1rem 0 1.25rem; }
 
   .toolbar {
     display: flex; flex-wrap: wrap; gap: 0.75rem;

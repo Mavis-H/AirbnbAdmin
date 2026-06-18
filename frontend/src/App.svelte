@@ -2,18 +2,30 @@
   import PlanView from './views/PlanView.svelte';
   import AdminView from './views/AdminView.svelte';
 
-  let view: 'plan' | 'admin' = 'plan';
+  // Route is decided by the URL path, not by a login:
+  //   /        → member view (parents): the plan only, dead-simple, no nav
+  //   /admin   → admin view (owner): a tab toggle between the plan and the management forms
+  // Each person installs the PWA from their own URL, so their home-screen icon
+  // always reopens the right view. Zero clicks, no account.
+  const isAdmin = window.location.pathname.replace(/\/+$/, '') === '/admin';
+
+  // Only the admin route has an internal tab toggle.
+  let adminTab: 'plan' | 'manage' = 'plan';
 </script>
 
-<nav>
-  <button class:active={view === 'plan'} on:click={() => (view = 'plan')}>This Week</button>
-  <button class:active={view === 'admin'} on:click={() => (view = 'admin')}>Admin</button>
-</nav>
+{#if isAdmin}
+  <nav>
+    <button class:active={adminTab === 'plan'} on:click={() => (adminTab = 'plan')}>This Week</button>
+    <button class:active={adminTab === 'manage'} on:click={() => (adminTab = 'manage')}>Management</button>
+  </nav>
 
-{#if view === 'plan'}
-  <PlanView />
+  {#if adminTab === 'plan'}
+    <PlanView mode="admin" />
+  {:else}
+    <AdminView />
+  {/if}
 {:else}
-  <AdminView />
+  <PlanView mode="member" />
 {/if}
 
 <style>
