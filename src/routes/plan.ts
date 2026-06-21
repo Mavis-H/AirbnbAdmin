@@ -7,6 +7,7 @@ interface TaskRow {
   type: string;
   status: string;
   override: number;
+  note: string | null;
   booking_id: number;
   checkin_at: string;
   checkout_at: string;
@@ -55,7 +56,7 @@ export async function planRoutes(app: FastifyInstance) {
 
     const rows = db.prepare(`
       SELECT
-        t.id, t.date, t.type, t.status, t.override,
+        t.id, t.date, t.type, t.status, t.override, t.note,
         t.booking_id, t.assignee_id,
         b.checkin_at, b.checkout_at, b.guest_name, b.lock_code, b.notes,
         b.property_id,

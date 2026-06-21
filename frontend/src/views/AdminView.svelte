@@ -19,7 +19,17 @@
   }
   interface Task {
     id: number; date: string; type: string; status: string; assignee_id: number; assignee_name: string; override: number;
+    note: string | null; booking_id: number;
   }
+
+  // Side-nav: which management section is showing
+  type Section = 'bookings' | 'takeovers' | 'properties';
+  let section: Section = 'bookings';
+  const sections: { id: Section; label: string }[] = [
+    { id: 'bookings', label: 'Bookings' },
+    { id: 'takeovers', label: 'Takeovers' },
+    { id: 'properties', label: 'Properties' },
+  ];
 
   let bookings: Booking[] = [];
   let takeovers: Takeover[] = [];
@@ -33,6 +43,11 @@
   $: filteredBookings = bookingPropFilter == null
     ? bookings
     : bookings.filter((b) => b.property_id === bookingPropFilter);
+
+  function onPropFilterChange(e: Event) {
+    const v = (e.target as HTMLSelectElement).value;
+    bookingPropFilter = v === '' ? null : Number(v);
+  }
 
   // Property edit state
   let syncingId: number | null = null;
@@ -134,8 +149,8 @@
     editGuestName = b.guest_name ?? '';
     editLockCode = b.lock_code ?? '';
     editNotes = b.notes ?? '';
-    const res = await get<Task[]>(`/api/plan?week=${b.checkin_at.slice(0, 10)}`);
-    bookingTasks = res.filter((t: Task & { booking_id: number }) => (t as any).booking_id === b.id);
+    editingNoteTaskId = null;
+    bookingTasks = await get<Task[]>(`/api/admin/bookings/${b.id}/tasks`);
   }
 
   async function saveBooking() {
@@ -164,6 +179,21 @@
     if (selectedBooking) await selectBooking(selectedBooking);
   }
 
+  // Per-task note editing
+  let editingNoteTaskId: number | null = null;
+  let editNoteText = '';
+
+  function startEditNote(t: Task) {
+    editingNoteTaskId = t.id;
+    editNoteText = t.note ?? '';
+  }
+
+  async function saveTaskNote(taskId: number) {
+    await patch(`/api/admin/tasks/${taskId}`, { note: editNoteText.trim() });
+    editingNoteTaskId = null;
+    if (selectedBooking) await selectBooking(selectedBooking);
+  }
+
   async function addTakeover() {
     await post('/api/admin/takeovers', {
       from_person_id: Number(toForm.from_person_id),
@@ -183,21 +213,31 @@
 </script>
 
 <div class="admin">
+  <nav class="side-nav">
+    {#each sections as s}
+      <button class:active={section === s.id} on:click={() => (section = s.id)}>
+        {s.label}
+      </button>
+    {/each}
+  </nav>
+
+  <div class="content">
+  {#if section === 'bookings'}
   <div class="cols">
     <!-- Booking list -->
     <aside class="booking-list">
       <h2>Bookings</h2>
       {#if properties.length > 1}
-        <div class="chips">
-          <button class="chip" class:active={bookingPropFilter == null} on:click={() => (bookingPropFilter = null)}>
-            All
-          </button>
+        <select
+          class="prop-filter"
+          value={bookingPropFilter == null ? '' : String(bookingPropFilter)}
+          on:change={onPropFilterChange}
+        >
+          <option value="">All properties</option>
           {#each properties as p}
-            <button class="chip" class:active={bookingPropFilter === p.id} on:click={() => (bookingPropFilter = p.id)}>
-              {p.name}
-            </button>
+            <option value={String(p.id)}>{p.name}</option>
           {/each}
-        </div>
+        </select>
       {/if}
       {#each filteredBookings as b}
         <button
@@ -253,15 +293,31 @@
           <section class="task-section">
             <h3>Tasks</h3>
             {#each bookingTasks as t}
-              <div class="task-row">
-                <span class="task-date">{formatDate(t.date)}</span>
-                <span class="task-type">{taskLabel(t.type)}</span>
-                <select value={String(t.assignee_id)} on:change={(e) => reassignTask(t.id, e)}>
-                  {#each persons as p}
-                    <option value={String(p.id)}>{p.name}</option>
-                  {/each}
-                </select>
-                {#if t.override}<span class="manual-tag">manual</span>{/if}
+              <div class="task-item">
+                <div class="task-row">
+                  <span class="task-date">{formatDate(t.date)}</span>
+                  <span class="task-type">{taskLabel(t.type)}</span>
+                  <select value={String(t.assignee_id)} on:change={(e) => reassignTask(t.id, e)}>
+                    {#each persons as p}
+                      <option value={String(p.id)}>{p.name}</option>
+                    {/each}
+                  </select>
+                  {#if t.override}<span class="manual-tag">manual</span>{/if}
+                  <button class="btn-note" on:click={() => startEditNote(t)}>
+                    {t.note ? 'Edit note' : '+ Note'}
+                  </button>
+                </div>
+                {#if editingNoteTaskId === t.id}
+                  <div class="note-editor">
+                    <textarea bind:value={editNoteText} rows="2" placeholder="Note for this task…" />
+                    <div class="note-actions">
+                      <button class="btn-primary" on:click={() => saveTaskNote(t.id)}>Save note</button>
+                      <button class="btn-secondary" on:click={() => (editingNoteTaskId = null)}>Cancel</button>
+                    </div>
+                  </div>
+                {:else if t.note}
+                  <p class="task-note">{t.note}</p>
+                {/if}
               </div>
             {/each}
           </section>
@@ -271,7 +327,9 @@
       {/if}
     </main>
   </div>
+  {/if}
 
+  {#if section === 'takeovers'}
   <!-- Takeovers -->
   <section class="takeover-section">
     <h2>Takeover Periods</h2>
@@ -305,7 +363,9 @@
       <button class="btn-add" on:click={() => (showTakeoverForm = true)}>+ Add Takeover</button>
     {/if}
   </section>
+  {/if}
 
+  {#if section === 'properties'}
   <!-- Properties -->
   <section class="property-section">
     <h2>Properties</h2>
@@ -378,24 +438,33 @@
       <button class="btn-add" on:click={() => (showNewProperty = true)}>+ Add Property</button>
     {/if}
   </section>
+  {/if}
+  </div>
 </div>
 
 <style>
-  .admin { max-width: 1000px; margin: 0 auto; padding: 1rem; }
+  .admin { display: flex; gap: 1.5rem; max-width: 1100px; margin: 0 auto; padding: 1rem; align-items: flex-start; }
+
+  .side-nav {
+    display: flex; flex-direction: column; gap: 0.25rem;
+    width: 160px; flex-shrink: 0; position: sticky; top: 1rem;
+  }
+  .side-nav button {
+    text-align: left; background: transparent; border: none;
+    padding: 0.55rem 0.85rem; border-radius: 8px; cursor: pointer;
+    font-size: 0.95rem; font-weight: 600; color: #555;
+  }
+  .side-nav button:hover { background: #f3f3f3; }
+  .side-nav button.active { background: #fff5f5; color: #FF5A5F; }
+
+  .content { flex: 1; min-width: 0; border-left: 1px solid #e5e5e5; padding-left: 1.5rem; }
 
   .cols { display: flex; gap: 1.5rem; margin-bottom: 2rem; }
 
   .booking-list { width: 240px; flex-shrink: 0; }
   .booking-list h2 { font-size: 1rem; margin-bottom: 0.5rem; color: #444; }
 
-  .chips { display: flex; flex-wrap: wrap; gap: 0.3rem; margin-bottom: 0.75rem; }
-  .chip {
-    background: #f0f0f0; border: 1px solid transparent; color: #555;
-    padding: 0.25rem 0.7rem; border-radius: 16px; cursor: pointer;
-    font-size: 0.8rem; font-weight: 500;
-  }
-  .chip.active { background: #FF5A5F; color: white; }
-  .chip:hover:not(.active) { background: #e5e5e5; }
+  .prop-filter { width: 100%; margin-bottom: 0.75rem; cursor: pointer; }
 
   .booking-item {
     display: block; width: 100%; text-align: left;
@@ -443,16 +512,35 @@
   }
 
   .task-section h3 { font-size: 0.95rem; margin-bottom: 0.5rem; color: #444; }
+  .task-item {
+    background: white; border-radius: 6px; border: 1px solid #eee;
+    margin-bottom: 0.35rem; padding: 0.5rem; overflow: hidden;
+  }
   .task-row {
-    display: flex; align-items: center; gap: 0.75rem;
-    padding: 0.5rem; background: white; border-radius: 6px;
-    border: 1px solid #eee; margin-bottom: 0.35rem; flex-wrap: wrap;
+    display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap;
   }
   .task-date { font-size: 0.8rem; color: #999; min-width: 80px; }
   .task-type { font-size: 0.9rem; font-weight: 500; flex: 1; min-width: 140px; }
   .manual-tag { font-size: 0.7rem; background: #FFF3CD; color: #856404; padding: 0.1rem 0.4rem; border-radius: 4px; }
 
-  .takeover-section { border-top: 1px solid #eee; padding-top: 1.5rem; }
+  .btn-note {
+    background: transparent; border: 1px solid #ddd; color: #666;
+    padding: 0.2rem 0.6rem; border-radius: 6px; cursor: pointer;
+    font-size: 0.78rem; font-weight: 500;
+  }
+  .btn-note:hover { background: #f5f5f5; border-color: #ccc; }
+  .task-note {
+    font-size: 0.82rem; color: #555;
+    border-top: 1px dashed #e5e5e5;
+    padding: 0.45rem 0.1rem 0.1rem; margin: 0.45rem 0 0; white-space: pre-wrap;
+  }
+  .note-editor {
+    border-top: 1px dashed #e5e5e5;
+    padding-top: 0.5rem; margin-top: 0.5rem;
+  }
+  .note-editor textarea { width: 100%; box-sizing: border-box; margin-bottom: 0.4rem; }
+  .note-actions { display: flex; gap: 0.5rem; }
+
   .takeover-section h2 { font-size: 1rem; margin-bottom: 0.75rem; color: #444; }
   .takeover-row {
     display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;
@@ -461,7 +549,6 @@
   }
   .takeover-form { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 0.75rem; align-items: flex-end; }
 
-  .property-section { border-top: 1px solid #eee; padding-top: 1.5rem; margin-top: 2rem; }
   .property-section h2 { font-size: 1rem; margin-bottom: 0.75rem; color: #444; }
   .property-section h3 { font-size: 0.9rem; margin: 1.25rem 0 0.5rem; color: #666; }
   .property-card {

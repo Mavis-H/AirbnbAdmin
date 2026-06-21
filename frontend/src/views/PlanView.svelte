@@ -8,6 +8,7 @@
   interface Property { id: number; name: string; }
   interface Task {
     id: number; date: string; type: string; status: string; override: number;
+    note: string | null;
     booking_id: number;
     guest_name: string | null; lock_code: string | null; notes: string | null;
     property_name: string; assignee_id: number; assignee_name: string;
@@ -55,6 +56,27 @@
 
   function shiftWeek(n: number) {
     weekStart = addDays(weekStart, n * 7);
+    loadTasks();
+  }
+
+  // Admin: jump to an arbitrary week via the native date picker, snapped to
+  // the Monday–Sunday week containing the picked date.
+  let dateInput: HTMLInputElement;
+
+  function openDatePicker() {
+    if (!dateInput) return;
+    try {
+      dateInput.showPicker();
+    } catch {
+      dateInput.focus();
+      dateInput.click();
+    }
+  }
+
+  function onPickDate(e: Event) {
+    const v = (e.target as HTMLInputElement).value;
+    if (!v) return;
+    weekStart = getMonday(v);
     loadTasks();
   }
 
@@ -120,8 +142,17 @@
     <div class="toolbar">
       <div class="week-nav">
         <button on:click={() => shiftWeek(-1)} title="Previous 7 days">‹</button>
-        <span class="week-label">{formatShort(weekStart)} – {formatShort(addDays(weekStart, 6))}</span>
+        <button class="week-label" on:click={openDatePicker} title="Pick a week">
+          {formatShort(weekStart)} – {formatShort(addDays(weekStart, 6))}
+        </button>
         <button on:click={() => shiftWeek(1)} title="Next 7 days">›</button>
+        <input
+          class="date-picker-hidden"
+          type="date"
+          bind:this={dateInput}
+          value={weekStart}
+          on:change={onPickDate}
+        />
       </div>
       <div class="filters">
         <select bind:value={selectedAssignee} on:change={loadTasks}>
@@ -177,10 +208,12 @@
                 <span class="lock-code">Code: <strong>{task.lock_code}</strong></span>
               {/if}
             </div>
-            {#if task.notes}
-              <p class="notes">{task.notes}</p>
+            {#if task.note}
+              <p class="task-note">{task.note}</p>
             {/if}
-            <div class="assignee">→ {task.assignee_name}{task.override ? ' (manual)' : ''}</div>
+            {#if mode === 'admin'}
+              <div class="assignee">→ {task.assignee_name}{task.override ? ' (manual)' : ''}</div>
+            {/if}
           </div>
         {/each}
       </section>
@@ -198,12 +231,23 @@
     display: flex; flex-wrap: wrap; gap: 0.75rem;
     align-items: center; justify-content: space-between; margin-bottom: 1.25rem;
   }
-  .week-nav { display: flex; align-items: center; gap: 0.5rem; flex-shrink: 0; }
-  .week-nav button {
+  .week-nav { position: relative; display: flex; align-items: center; gap: 0.5rem; flex-shrink: 0; }
+  .week-nav > button:not(.week-label) {
     background: #eee; border: none; padding: 0.35rem 0.7rem;
     border-radius: 6px; cursor: pointer; font-size: 1rem; line-height: 1;
   }
-  .week-label { font-weight: 600; font-size: 0.9rem; white-space: nowrap; min-width: 9rem; text-align: center; }
+  .week-label {
+    background: transparent; border: none; cursor: pointer;
+    font-weight: 600; font-size: 0.9rem; white-space: nowrap;
+    min-width: 9rem; text-align: center; color: inherit;
+    padding: 0.35rem 0.3rem; border-radius: 6px;
+  }
+  .week-label:hover { background: #f3f3f3; text-decoration: underline; }
+  .date-picker-hidden {
+    position: absolute; bottom: 0; left: 50%;
+    width: 1px; height: 1px; padding: 0; border: 0;
+    opacity: 0; pointer-events: none;
+  }
   .filters { display: flex; gap: 0.5rem; flex-wrap: wrap; }
   select { padding: 0.35rem 0.6rem; border-radius: 6px; border: 1px solid #ccc; font-size: 0.95rem; }
 
@@ -242,7 +286,11 @@
   .property { font-weight: 500; }
   .lock-code { color: #FF5A5F; font-size: 0.9rem; }
 
-  .notes { font-size: 0.85rem; color: #888; margin-top: 0.25rem; }
+  .task-note {
+    font-size: 0.85rem; color: #555; background: #f9f9f9;
+    border-left: 3px solid #FF5A5F; border-radius: 4px;
+    padding: 0.4rem 0.6rem; margin-top: 0.4rem; white-space: pre-wrap;
+  }
   .assignee { font-size: 0.8rem; color: #aaa; margin-top: 0.4rem; }
 
   .msg { text-align: center; padding: 3rem; color: #999; }

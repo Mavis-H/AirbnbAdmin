@@ -36,7 +36,8 @@ export function initSchema() {
       date         TEXT NOT NULL,
       type         TEXT NOT NULL,
       status       TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'done')),
-      override     INTEGER NOT NULL DEFAULT 0
+      override     INTEGER NOT NULL DEFAULT 0,
+      note         TEXT
     );
 
     CREATE TABLE IF NOT EXISTS takeover (
@@ -47,6 +48,12 @@ export function initSchema() {
       end_date       TEXT NOT NULL
     );
   `);
+
+  // --- Lightweight migrations (for DBs created before a column was added) ---
+  const taskCols = db.prepare('PRAGMA table_info(task)').all() as { name: string }[];
+  if (!taskCols.some((c) => c.name === 'note')) {
+    db.exec('ALTER TABLE task ADD COLUMN note TEXT');
+  }
 }
 
 export type TaskType =

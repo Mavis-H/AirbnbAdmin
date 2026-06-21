@@ -34,6 +34,23 @@ export async function adminRoutes(app: FastifyInstance) {
     reply.send({ ok: true });
   });
 
+  // GET /api/admin/bookings/:id/tasks — ALL tasks for one booking (no week window).
+  // The plan endpoint is windowed to 7 days, which hides checkout-day tasks on long
+  // stays; the booking detail view needs the full set.
+  app.get('/api/admin/bookings/:id/tasks', (req, reply) => {
+    const { id } = req.params as { id: string };
+    const rows = db.prepare(`
+      SELECT t.id, t.date, t.type, t.status, t.override, t.note,
+             t.booking_id, t.assignee_id,
+             per.name AS assignee_name
+      FROM task t
+      JOIN person per ON per.id = t.assignee_id
+      WHERE t.booking_id = ?
+      ORDER BY t.date ASC, t.type ASC
+    `).all(Number(id));
+    reply.send(rows);
+  });
+
   // POST /api/admin/bookings/:id/generate-tasks — (re)generate tasks for one booking
   app.post('/api/admin/bookings/:id/generate-tasks', (req, reply) => {
     const { id } = req.params as { id: string };
@@ -43,10 +60,14 @@ export async function adminRoutes(app: FastifyInstance) {
 
   // --- Tasks ---
 
-  // PATCH /api/admin/tasks/:id — reassign or change status
+  // PATCH /api/admin/tasks/:id — reassign, change status, or set a per-task note
   app.patch('/api/admin/tasks/:id', (req, reply) => {
     const { id } = req.params as { id: string };
-    const body = req.body as { assignee_id?: number; status?: 'pending' | 'done' };
+    const body = req.body as {
+      assignee_id?: number;
+      status?: 'pending' | 'done';
+      note?: string | null;
+    };
 
     if (body.assignee_id !== undefined) {
       db.prepare(`
@@ -55,6 +76,10 @@ export async function adminRoutes(app: FastifyInstance) {
     }
     if (body.status !== undefined) {
       db.prepare(`UPDATE task SET status = ? WHERE id = ?`).run(body.status, Number(id));
+    }
+    if (body.note !== undefined) {
+      // Empty string clears the note back to NULL
+      db.prepare(`UPDATE task SET note = ? WHERE id = ?`).run(body.note || null, Number(id));
     }
 
     reply.send({ ok: true });
