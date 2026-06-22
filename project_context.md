@@ -171,9 +171,15 @@ Keep a clean boundary between the logic layer and real delivery. `sendNotificati
 
 ---
 
+## Phase 2 — PWA polish — ✅ Done
+
+- **App icon**: generated, dependency-free, by [frontend/scripts/gen-icons.mjs](frontend/scripts/gen-icons.mjs) (`npm run icons`) — "162" in Airbnb-pink (#FF5A5F) on a white rounded square, rendered as vector strokes + supersampled AA, encoded to PNG via Node's `zlib`. Emits `icon-192/512`, `icon-maskable-512` (digits inside the ~80% safe zone), and `apple-touch-icon` (180, full-bleed for iOS's own rounding).
+- **Full-screen standalone**: `display: standalone`, white `background_color` splash, `viewport-fit=cover` + `env(safe-area-inset-*)` padding for notch/home-indicator, plus iOS `apple-mobile-web-app-*` tags and `apple-touch-icon` link.
+- **Per-role install**: `index.html` injects the manifest by path — `/manifest.json` (`start_url: /`) for members, `/manifest.admin.json` (`start_url: /admin`) for the owner — so each home-screen icon reopens its own view. Home-screen label = "162" / "162 Admin".
+- **Offline app-shell**: [public/sw.js](frontend/public/sw.js) (`turnover-v2`) precaches the shell + icons; navigations = network-first → cached shell, `/api/*` = network-first → cache fallback, other GETs = stale-while-revalidate. SW still registers in PROD only.
+
 ## Later Phases (reference only — do NOT implement this phase)
 
-- **Phase 2**: PWA polish (icon, full-screen standalone, Add-to-Home-Screen experience)
 - **Phase 3**: wire up the daily WeCom push + a minimal deployment to validate real on-device delivery
 - **Phase 4**: task completion feedback, five-star review reminders, consumables inventory tracking, etc.
 
