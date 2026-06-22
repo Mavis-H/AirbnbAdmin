@@ -56,6 +56,7 @@ Deployment note: serving `/admin` directly (or on refresh) needs the prod server
 - Scheduling: `node-cron` (only truly enabled after deployment)
 - Frontend: Svelte + Vite; two views — the this-week plan page and the admin forms; `manifest.json` + service worker for PWA
 - Notifications: abstracted behind a single `sendNotification()` interface; this phase = `console.log`; deployment phase = WeCom `qyapi.weixin.qq.com`
+- Language: **Chinese-only UI** (single language, no toggle — fixed audience). All UI strings centralized in [frontend/src/lib/strings.ts](frontend/src/lib/strings.ts); task-type labels in [frontend/src/lib/taskLabels.ts](frontend/src/lib/taskLabels.ts). Dates/times render via the `zh-CN` locale, 24-hour clock. Person names stay as-is (admin = "Mavis & Andy", member = "Mom & Dad"); role labels aren't shown in the member view.
 
 ---
 
@@ -121,6 +122,7 @@ Both roles can view the plan page (filterable by assignee). `is_app_user` flag r
 1. **Lock-code rule** (Eufy smartlock):
    - The lock always has a permanent **default admin passcode** stored on the property. Between bookings, no action needed — lock reverts to default automatically.
    - Each booking gets a **temporary passcode** that admin creates manually in the Eufy app; it auto-expires on checkout. `lock_code` on BOOKING is always manually entered — never auto-generated.
+   - The `lock_code` is **not displayed on the plan task card** — the flow is Eufy-driven (Eufy generates the code, admin types it into this app afterward), so showing it on the "set passcode" reminder would be backwards. The code lives only in the admin booking detail.
    - `lock_code_change` task (assigned to admin) is generated in **two scenarios**:
      - On the **checkout date** of the preceding booking, if a next booking exists (so admin knows to create the temp code before next guest arrives)
      - On the **sync date (today)** when a new booking is first detected by the daily iCal pull
@@ -177,6 +179,10 @@ Keep a clean boundary between the logic layer and real delivery. `sendNotificati
 - **Full-screen standalone**: `display: standalone`, white `background_color` splash, `viewport-fit=cover` + `env(safe-area-inset-*)` padding for notch/home-indicator, plus iOS `apple-mobile-web-app-*` tags and `apple-touch-icon` link.
 - **Per-role install**: `index.html` injects the manifest by path — `/manifest.json` (`start_url: /`) for members, `/manifest.admin.json` (`start_url: /admin`) for the owner — so each home-screen icon reopens its own view. Home-screen label = "162" / "162 Admin".
 - **Offline app-shell**: [public/sw.js](frontend/public/sw.js) (`turnover-v2`) precaches the shell + icons; navigations = network-first → cached shell, `/api/*` = network-first → cache fallback, other GETs = stale-while-revalidate. SW still registers in PROD only.
+
+## Next up (agreed, not yet built)
+
+- **Per-property task customization**: each property should define which task types it generates, so e.g. a pet-friendly unit can have different/extra tasks than others. Currently the 9 task types are generated uniformly for every booking by the logic engine. This is the next feature after the Chinese localization pass.
 
 ## Later Phases (reference only — do NOT implement this phase)
 
