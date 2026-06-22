@@ -3,6 +3,7 @@
   import { get, patch, post, del } from '../lib/api';
   import { taskLabel } from '../lib/taskLabels';
   import { formatDate, formatDateTime } from '../lib/format';
+  import { t } from '../lib/strings';
 
   interface Booking {
     id: number; property_id: number; property_name: string; checkin_at: string; checkout_at: string;
@@ -26,9 +27,9 @@
   type Section = 'bookings' | 'takeovers' | 'properties';
   let section: Section = 'bookings';
   const sections: { id: Section; label: string }[] = [
-    { id: 'bookings', label: 'Bookings' },
-    { id: 'takeovers', label: 'Takeovers' },
-    { id: 'properties', label: 'Properties' },
+    { id: 'bookings', label: t.admin.sections.bookings },
+    { id: 'takeovers', label: t.admin.sections.takeovers },
+    { id: 'properties', label: t.admin.sections.properties },
   ];
 
   let bookings: Booking[] = [];
@@ -226,14 +227,14 @@
   <div class="cols">
     <!-- Booking list -->
     <aside class="booking-list">
-      <h2>Bookings</h2>
+      <h2>{t.admin.sections.bookings}</h2>
       {#if properties.length > 1}
         <select
           class="prop-filter"
           value={bookingPropFilter == null ? '' : String(bookingPropFilter)}
           on:change={onPropFilterChange}
         >
-          <option value="">All properties</option>
+          <option value="">{t.admin.allProperties}</option>
           {#each properties as p}
             <option value={String(p.id)}>{p.name}</option>
           {/each}
@@ -262,7 +263,7 @@
               {formatDateTime(selectedBooking.checkin_at)} → {formatDateTime(selectedBooking.checkout_at)}
             </span>
           </h2>
-          <button class="btn-close" title="Close" on:click={closeBooking}>✕</button>
+          <button class="btn-close" title={t.admin.close} on:click={closeBooking}>✕</button>
         </div>
 
         <section
@@ -270,60 +271,60 @@
           on:focusin={() => (bookingFocused = true)}
           on:focusout={onBookingFocusOut}
         >
-          <label>Guest name
-            <input bind:value={editGuestName} placeholder="Guest name" />
+          <label>{t.admin.guestName}
+            <input bind:value={editGuestName} placeholder={t.admin.guestNamePh} />
           </label>
-          <label>Lock code
-            <input bind:value={editLockCode} placeholder="e.g. 482736" />
+          <label>{t.admin.lockCode}
+            <input bind:value={editLockCode} placeholder={t.admin.lockCodePh} />
           </label>
-          <label>Notes
-            <textarea bind:value={editNotes} rows="3" placeholder="Any notes for this stay…" />
+          <label>{t.admin.notes}
+            <textarea bind:value={editNotes} rows="3" placeholder={t.admin.notesPh} />
           </label>
           {#if bookingDirty || bookingFocused || savedFlash}
             <div class="save-row">
               <button class="btn-primary" on:click={saveBooking} disabled={saving || !bookingDirty}>
-                {saving ? 'Saving…' : 'Save'}
+                {saving ? t.admin.saving : t.admin.save}
               </button>
-              {#if savedFlash}<span class="saved-flash">Saved ✓</span>{/if}
+              {#if savedFlash}<span class="saved-flash">{t.admin.saved}</span>{/if}
             </div>
           {/if}
         </section>
 
         {#if bookingTasks.length > 0}
           <section class="task-section">
-            <h3>Tasks</h3>
-            {#each bookingTasks as t}
+            <h3>{t.admin.tasksTitle}</h3>
+            {#each bookingTasks as task}
               <div class="task-item">
                 <div class="task-row">
-                  <span class="task-date">{formatDate(t.date)}</span>
-                  <span class="task-type">{taskLabel(t.type)}</span>
-                  <select value={String(t.assignee_id)} on:change={(e) => reassignTask(t.id, e)}>
+                  <span class="task-date">{formatDate(task.date)}</span>
+                  <span class="task-type">{taskLabel(task.type)}</span>
+                  <select value={String(task.assignee_id)} on:change={(e) => reassignTask(task.id, e)}>
                     {#each persons as p}
                       <option value={String(p.id)}>{p.name}</option>
                     {/each}
                   </select>
-                  {#if t.override}<span class="manual-tag">manual</span>{/if}
-                  <button class="btn-note" on:click={() => startEditNote(t)}>
-                    {t.note ? 'Edit note' : '+ Note'}
+                  {#if task.override}<span class="manual-tag">{t.admin.manual}</span>{/if}
+                  <button class="btn-note" on:click={() => startEditNote(task)}>
+                    {task.note ? t.admin.editNote : t.admin.addNote}
                   </button>
                 </div>
-                {#if editingNoteTaskId === t.id}
+                {#if editingNoteTaskId === task.id}
                   <div class="note-editor">
-                    <textarea bind:value={editNoteText} rows="2" placeholder="Note for this task…" />
+                    <textarea bind:value={editNoteText} rows="2" placeholder={t.admin.notePh} />
                     <div class="note-actions">
-                      <button class="btn-primary" on:click={() => saveTaskNote(t.id)}>Save note</button>
-                      <button class="btn-secondary" on:click={() => (editingNoteTaskId = null)}>Cancel</button>
+                      <button class="btn-primary" on:click={() => saveTaskNote(task.id)}>{t.admin.saveNote}</button>
+                      <button class="btn-secondary" on:click={() => (editingNoteTaskId = null)}>{t.admin.cancel}</button>
                     </div>
                   </div>
-                {:else if t.note}
-                  <p class="task-note">{t.note}</p>
+                {:else if task.note}
+                  <p class="task-note">{task.note}</p>
                 {/if}
               </div>
             {/each}
           </section>
         {/if}
       {:else}
-        <p class="placeholder">Select a booking to edit.</p>
+        <p class="placeholder">{t.admin.selectBooking}</p>
       {/if}
     </main>
   </div>
@@ -332,23 +333,23 @@
   {#if section === 'takeovers'}
   <!-- Takeovers -->
   <section class="takeover-section">
-    <h2>Takeover Periods</h2>
-    {#each takeovers as t}
+    <h2>{t.admin.takeoverTitle}</h2>
+    {#each takeovers as tk}
       <div class="takeover-row">
-        <span>{t.from_name} → {t.to_name}</span>
-        <span>{t.start_date} to {t.end_date}</span>
-        <button class="btn-danger" on:click={() => deleteTakeover(t.id)}>Remove</button>
+        <span>{tk.from_name} → {tk.to_name}</span>
+        <span>{tk.start_date} {t.admin.dateTo} {tk.end_date}</span>
+        <button class="btn-danger" on:click={() => deleteTakeover(tk.id)}>{t.admin.remove}</button>
       </div>
     {/each}
 
     {#if showTakeoverForm}
       <div class="takeover-form">
         <select bind:value={toForm.from_person_id}>
-          <option value="">From person…</option>
+          <option value="">{t.admin.fromPerson}</option>
           {#each persons as p}<option value={String(p.id)}>{p.name}</option>{/each}
         </select>
         <select bind:value={toForm.to_person_id}>
-          <option value="">To person…</option>
+          <option value="">{t.admin.toPerson}</option>
           {#each persons as p}<option value={String(p.id)}>{p.name}</option>{/each}
         </select>
         <input type="date" bind:value={toForm.start_date} />
@@ -356,11 +357,11 @@
         <button class="btn-primary"
           on:click={addTakeover}
           disabled={!toForm.from_person_id || !toForm.to_person_id || !toForm.start_date || !toForm.end_date}
-        >Add</button>
-        <button class="btn-secondary" on:click={() => (showTakeoverForm = false)}>Cancel</button>
+        >{t.admin.add}</button>
+        <button class="btn-secondary" on:click={() => (showTakeoverForm = false)}>{t.admin.cancel}</button>
       </div>
     {:else}
-      <button class="btn-add" on:click={() => (showTakeoverForm = true)}>+ Add Takeover</button>
+      <button class="btn-add" on:click={() => (showTakeoverForm = true)}>{t.admin.addTakeover}</button>
     {/if}
   </section>
   {/if}
@@ -368,7 +369,7 @@
   {#if section === 'properties'}
   <!-- Properties -->
   <section class="property-section">
-    <h2>Properties</h2>
+    <h2>{t.admin.sections.properties}</h2>
     {#each properties as p (p.id)}
       <div
         class="property-card"
@@ -377,65 +378,65 @@
         on:input={() => markPropDirty(p.id)}
       >
         <div class="property-grid">
-          <label>Name
+          <label>{t.admin.propName}
             <input bind:value={p.name} />
           </label>
-          <label>iCal URL
-            <input bind:value={p.ical_url} placeholder="https://www.airbnb.com/calendar/ical/…" />
+          <label>{t.admin.icalUrl}
+            <input bind:value={p.ical_url} placeholder={t.admin.icalPh} />
           </label>
-          <label>Check-in time
+          <label>{t.admin.checkinTime}
             <input type="time" bind:value={p.checkin_time} />
           </label>
-          <label>Check-out time
+          <label>{t.admin.checkoutTime}
             <input type="time" bind:value={p.checkout_time} />
           </label>
-          <label>Default passcode (Eufy admin)
-            <input bind:value={p.default_passcode} placeholder="e.g. 135790" />
+          <label>{t.admin.defaultPasscode}
+            <input bind:value={p.default_passcode} placeholder={t.admin.passcodePh} />
           </label>
         </div>
         <div class="property-actions">
           {#if dirtyPropIds.has(p.id) || focusedPropId === p.id || propSavedFlashId === p.id}
             <button class="btn-primary" on:click={() => saveProperty(p)} disabled={!dirtyPropIds.has(p.id)}>
-              Save
+              {t.admin.save}
             </button>
-            {#if propSavedFlashId === p.id}<span class="saved-flash">Saved ✓</span>{/if}
+            {#if propSavedFlashId === p.id}<span class="saved-flash">{t.admin.saved}</span>{/if}
           {/if}
           <button class="btn-secondary" on:click={() => syncProperty(p.id)} disabled={syncingId === p.id}>
-            {syncingId === p.id ? 'Syncing…' : 'Sync iCal'}
+            {syncingId === p.id ? t.admin.syncing : t.admin.syncIcal}
           </button>
         </div>
       </div>
     {/each}
 
     {#if showNewProperty}
-      <h3>Add a property</h3>
+      <h3>{t.admin.addPropertyTitle}</h3>
       <div class="property-card">
         <div class="property-grid">
-          <label>Name
-            <input bind:value={newProp.name} placeholder="e.g. Seaside Cottage" />
+          <label>{t.admin.propName}
+            <input bind:value={newProp.name} placeholder={t.admin.namePh} />
           </label>
-          <label>iCal URL
-            <input bind:value={newProp.ical_url} placeholder="https://www.airbnb.com/calendar/ical/…" />
+          <label>{t.admin.icalUrl}
+            <input bind:value={newProp.ical_url} placeholder={t.admin.icalPh} />
           </label>
-          <label>Check-in time
+          <label>{t.admin.checkinTime}
             <input type="time" bind:value={newProp.checkin_time} />
           </label>
-          <label>Check-out time
+          <label>{t.admin.checkoutTime}
             <input type="time" bind:value={newProp.checkout_time} />
           </label>
-          <label>Default passcode (Eufy admin)
-            <input bind:value={newProp.default_passcode} placeholder="e.g. 135790" />
+          <label>{t.admin.defaultPasscode}
+            <input bind:value={newProp.default_passcode} placeholder={t.admin.passcodePh} />
           </label>
         </div>
         <div class="property-actions">
           <button class="btn-primary" on:click={addProperty} disabled={!newProp.name || !newProp.ical_url}>
-            Add Property
+            {t.admin.addPropertyBtn}
           </button>
-          <button class="btn-secondary" on:click={() => (showNewProperty = false)}>Cancel</button>
+          <button class="btn-secondary" on:click={() => (showNewProperty = false)}>{t.admin.cancel}</button>
         </div>
       </div>
     {:else}
-      <button class="btn-add" on:click={() => (showNewProperty = true)}>+ Add Property</button>
+      <button class="btn-add" on:click={() => (showNewProperty = true)}>{t.admin.addProperty}</button>
     {/if}
   </section>
   {/if}

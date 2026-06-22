@@ -1,6 +1,7 @@
 <script lang="ts">
   import PlanView from './views/PlanView.svelte';
   import AdminView from './views/AdminView.svelte';
+  import { t } from './lib/strings';
 
   // Route is decided by the URL path, not by a login:
   //   /        → member view (parents): the plan only, dead-simple, no nav
@@ -15,8 +16,8 @@
 
 {#if isAdmin}
   <nav>
-    <button class:active={adminTab === 'plan'} on:click={() => (adminTab = 'plan')}>This Week</button>
-    <button class:active={adminTab === 'manage'} on:click={() => (adminTab = 'manage')}>Management</button>
+    <button class:active={adminTab === 'plan'} on:click={() => (adminTab = 'plan')}>{t.nav.thisWeek}</button>
+    <button class:active={adminTab === 'manage'} on:click={() => (adminTab = 'manage')}>{t.nav.management}</button>
   </nav>
 
   {#if adminTab === 'plan'}

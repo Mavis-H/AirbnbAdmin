@@ -24,7 +24,7 @@ async function seed() {
   // --- People ---
   const adminId = db.prepare(
     "INSERT INTO person (name, role, notify_method) VALUES (?, 'admin', 'none')"
-  ).run('Andy (Owner)').lastInsertRowid as number;
+  ).run('Mavis & Andy').lastInsertRowid as number;
 
   const memberId = db.prepare(
     "INSERT INTO person (name, role, notify_method) VALUES (?, 'member', 'wecom_userid')"

@@ -3,6 +3,7 @@
   import { get, patch } from '../lib/api';
   import { taskLabel } from '../lib/taskLabels';
   import { formatShort } from '../lib/format';
+  import { t } from '../lib/strings';
 
   interface Person { id: number; name: string; role: string; }
   interface Property { id: number; name: string; }
@@ -91,8 +92,8 @@
   }
 
   function formatDay(dateStr: string): string {
-    return new Date(dateStr + 'T00:00:00Z').toLocaleDateString('en-US', {
-      weekday: 'long', month: 'short', day: 'numeric', timeZone: 'UTC',
+    return new Date(dateStr + 'T00:00:00Z').toLocaleDateString('zh-CN', {
+      weekday: 'long', month: 'long', day: 'numeric', timeZone: 'UTC',
     });
   }
 
@@ -141,11 +142,11 @@
   {#if mode === 'admin'}
     <div class="toolbar">
       <div class="week-nav">
-        <button on:click={() => shiftWeek(-1)} title="Previous 7 days">‹</button>
-        <button class="week-label" on:click={openDatePicker} title="Pick a week">
+        <button on:click={() => shiftWeek(-1)} title={t.plan.prevWeek}>‹</button>
+        <button class="week-label" on:click={openDatePicker} title={t.plan.pickWeek}>
           {formatShort(weekStart)} – {formatShort(addDays(weekStart, 6))}
         </button>
-        <button on:click={() => shiftWeek(1)} title="Next 7 days">›</button>
+        <button on:click={() => shiftWeek(1)} title={t.plan.nextWeek}>›</button>
         <input
           class="date-picker-hidden"
           type="date"
@@ -156,14 +157,14 @@
       </div>
       <div class="filters">
         <select bind:value={selectedAssignee} on:change={loadTasks}>
-          <option value="">All assignees</option>
+          <option value="">{t.plan.allAssignees}</option>
           {#each persons as p}
             <option value={String(p.id)}>{p.name}</option>
           {/each}
         </select>
         {#if properties.length > 1}
           <select bind:value={selectedProperty} on:change={loadTasks}>
-            <option value="">All properties</option>
+            <option value="">{t.plan.allProperties}</option>
             {#each properties as p}
               <option value={String(p.id)}>{p.name}</option>
             {/each}
@@ -172,16 +173,16 @@
       </div>
     </div>
   {:else}
-    <h1 class="member-title">This Week</h1>
+    <h1 class="member-title">{t.plan.title}</h1>
     <p class="member-range">{formatShort(weekStart)} – {formatShort(addDays(weekStart, 6))}</p>
   {/if}
 
   {#if loading}
-    <p class="msg">Loading…</p>
+    <p class="msg">{t.plan.loading}</p>
   {:else if error}
     <p class="msg error">{error}</p>
   {:else if groupedByDay.length === 0}
-    <p class="msg">No tasks this week.</p>
+    <p class="msg">{t.plan.empty}</p>
   {:else}
     {#each groupedByDay as [day, dayTasks]}
       <section class="day-group">
@@ -192,7 +193,7 @@
               <button
                 class="check"
                 class:checked={task.status === 'done'}
-                title={task.status === 'done' ? 'Mark as not done' : 'Mark as done'}
+                title={task.status === 'done' ? t.plan.markUndone : t.plan.markDone}
                 on:click={() => toggleDone(task)}
               >
                 {task.status === 'done' ? '✓' : ''}
@@ -204,15 +205,12 @@
               {#if task.guest_name}
                 <span>· {task.guest_name}</span>
               {/if}
-              {#if task.lock_code && (task.type === 'lock_code_change')}
-                <span class="lock-code">Code: <strong>{task.lock_code}</strong></span>
-              {/if}
             </div>
             {#if task.note}
               <p class="task-note">{task.note}</p>
             {/if}
             {#if mode === 'admin'}
-              <div class="assignee">→ {task.assignee_name}{task.override ? ' (manual)' : ''}</div>
+              <div class="assignee">→ {task.assignee_name}{task.override ? ` (${t.plan.manual})` : ''}</div>
             {/if}
           </div>
         {/each}
@@ -284,7 +282,6 @@
 
   .task-meta { font-size: 0.9rem; color: #666; display: flex; gap: 0.4rem; flex-wrap: wrap; margin-bottom: 0.2rem; }
   .property { font-weight: 500; }
-  .lock-code { color: #FF5A5F; font-size: 0.9rem; }
 
   .task-note {
     font-size: 0.85rem; color: #555; background: #f9f9f9;
