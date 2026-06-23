@@ -66,6 +66,11 @@ export async function syncAllProperties() {
   }[];
 
   for (const p of properties) {
-    await syncProperty(p.id, p.ical_url);
+    // Isolate failures: one unreachable/invalid iCal URL must not abort the rest.
+    try {
+      await syncProperty(p.id, p.ical_url);
+    } catch (err) {
+      console.error(`[sync] property ${p.id} failed:`, (err as Error).message);
+    }
   }
 }

@@ -15,6 +15,7 @@ async function seed() {
   db.exec(`
     DELETE FROM task;
     DELETE FROM takeover;
+    DELETE FROM property_task_pref;
     DELETE FROM booking;
     DELETE FROM property;
     DELETE FROM person;
@@ -47,6 +48,12 @@ async function seed() {
     INSERT INTO takeover (from_person_id, to_person_id, start_date, end_date)
     VALUES (?, ?, '2026-07-05', '2026-07-10')
   `).run(memberId, adminId);
+
+  // --- Demo: opt the first property into an optional task (pet-friendly unit) ---
+  // Set before sync so task generation picks it up.
+  db.prepare(
+    "INSERT INTO property_task_pref (property_id, type, enabled) VALUES (?, 'confirm_if_have_pets', 1)"
+  ).run(property1Id);
 
   // --- Pull bookings from each fixture + generate tasks ---
   await syncProperty(property1Id, FIXTURE_1, /* useFile */ true);

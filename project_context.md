@@ -103,6 +103,12 @@ TAKEOVER   (takeover period)
   to_person_id    FK -> PERSON (e.g. me)
   start_date
   end_date
+
+PROPERTY_TASK_PREF   (per-property task on/off; sparse — only stores deviations)
+  property_id     FK -> PROPERTY
+  type            task type (standard or optional)
+  enabled         0/1
+  PRIMARY KEY (property_id, type)
 ```
 
 **Roles:**
@@ -148,7 +154,7 @@ Both roles can view the plan page (filterable by assignee). `is_app_user` flag r
 
 1. **Default**: on-site tasks default to `member`; admin-only tasks (e.g. five-star review, checkin checklist) default to `admin`.
 2. **Takeover period**: if a task's date falls within a TAKEOVER range and the default assignee equals that record's `from_person`, switch the assignee to `to_person`.
-3. **Manual override**: a per-task manual assignment wins over everything (`override=true`).
+3. **Manual override**: a per-task manual assignment wins over everything (`override=true`). The PATCH compares the pick against the engine default (`computeDefaultAssignee`) — choosing a non-default assignee sets `override=1` (shows the 手动 tag); reverting to the default clears it back to `override=0`.
 
 ---
 
@@ -165,7 +171,7 @@ Both roles can view the plan page (filterable by assignee). `is_app_user` flag r
 
 ### Out of scope this phase:
 - Real WeCom push (needs a public IP + trusted-IP whitelist — deferred to deployment)
-- Real cron scheduling (manual trigger is fine locally)
+- ~~Real cron scheduling~~ → a daily `node-cron` job (04:00) now calls `syncAllProperties` in [src/server.ts](src/server.ts). It only fires while the server process is up, so *truly* always-on daily sync still needs the Phase 3 deployment; manual per-property "Sync" remains available anytime. `syncAllProperties` isolates per-property failures so one bad iCal URL won't abort the rest.
 - Any server / domain / HTTPS / VPS configuration
 
 ### Design constraint (important):
@@ -180,9 +186,17 @@ Keep a clean boundary between the logic layer and real delivery. `sendNotificati
 - **Per-role install**: `index.html` injects the manifest by path — `/manifest.json` (`start_url: /`) for members, `/manifest.admin.json` (`start_url: /admin`) for the owner — so each home-screen icon reopens its own view. Home-screen label = "162" / "162 Admin".
 - **Offline app-shell**: [public/sw.js](frontend/public/sw.js) (`turnover-v2`) precaches the shell + icons; navigations = network-first → cached shell, `/api/*` = network-first → cache fallback, other GETs = stale-while-revalidate. SW still registers in PROD only.
 
-## Next up (agreed, not yet built)
+## Per-property task customization — ✅ Done
 
-- **Per-property task customization**: each property should define which task types it generates, so e.g. a pet-friendly unit can have different/extra tasks than others. Currently the 9 task types are generated uniformly for every booking by the logic engine. This is the next feature after the Chinese localization pass.
+Each property controls which task types it generates, via a **catalog** of types split into two groups ([src/engine/taskCatalog.ts](src/engine/taskCatalog.ts), mirrored in [frontend/src/lib/taskLabels.ts](frontend/src/lib/taskLabels.ts)):
+- **Standard** (the original 9) — on by default for every property.
+- **Optional** — opt-in per property. Currently one: `confirm_if_have_pets` (确认是否携带宠物; admin). It uses a **lead-time** rule (`leadDays: 15`): dated 15 days before check-in, or **today** if the booking is already within 15 days when first synced. Add more by editing the catalog (type + `{role, timing, optional, leadDays?}`) and the frontend label/lists.
+
+- **Storage**: `property_task_pref(property_id, type, enabled)` — *sparse*: standard types are active unless a row disables them; optional types active only when a row enables them.
+- **Engine**: `generateTasksForBooking` gates every standard task by `isTypeActive`, then generates enabled optional types generically on their `timing` date (respecting takeover/override). `createNewBookingAdminTasks` is gated too.
+- **Toggle behavior** ([setTaskPref](src/engine/logic.ts)): enabling regenerates the type for the property's bookings; disabling **deletes its pending tasks but keeps done ones**.
+- **API**: `GET /api/admin/properties` returns `active_task_types` per property; `PATCH /api/admin/properties/:id/task-types {type, enabled}` toggles one.
+- **UI**: each property card has a 任务设置 subsection — checkboxes for the 9 standard types + an "add optional" dropdown for opt-in types. A 删除房源 button hard-deletes the property (`DELETE /api/admin/properties/:id`) — cascading its bookings, their tasks (incl. future pending), and task prefs in one transaction.
 
 ## Later Phases (reference only — do NOT implement this phase)
 

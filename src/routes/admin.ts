@@ -1,6 +1,11 @@
 import type { FastifyInstance } from 'fastify';
 import db from '../db/client.js';
-import { generateTasksForBooking } from '../engine/logic.js';
+import {
+  generateTasksForBooking,
+  activeTaskTypes,
+  setTaskPref,
+  computeDefaultAssignee,
+} from '../engine/logic.js';
 import { syncProperty } from '../ical/sync.js';
 
 export async function adminRoutes(app: FastifyInstance) {
@@ -70,9 +75,15 @@ export async function adminRoutes(app: FastifyInstance) {
     };
 
     if (body.assignee_id !== undefined) {
-      db.prepare(`
-        UPDATE task SET assignee_id = ?, override = 1 WHERE id = ?
-      `).run(body.assignee_id, Number(id));
+      // Only flag as a manual override if the pick differs from the engine default;
+      // reverting to the default assignee clears the override (and its "手动" tag).
+      const task = db
+        .prepare('SELECT type, date FROM task WHERE id = ?')
+        .get(Number(id)) as { type: string; date: string } | undefined;
+      const def = task ? computeDefaultAssignee(task.type, task.date) : null;
+      const override = def !== null && body.assignee_id === def ? 0 : 1;
+      db.prepare('UPDATE task SET assignee_id = ?, override = ? WHERE id = ?')
+        .run(body.assignee_id, override, Number(id));
     }
     if (body.status !== undefined) {
       db.prepare(`UPDATE task SET status = ? WHERE id = ?`).run(body.status, Number(id));
@@ -125,9 +136,21 @@ export async function adminRoutes(app: FastifyInstance) {
 
   // --- Properties ---
 
-  // GET /api/admin/properties
+  // GET /api/admin/properties — each property includes its active task types
   app.get('/api/admin/properties', (_req, reply) => {
-    reply.send(db.prepare('SELECT * FROM property').all());
+    const props = db.prepare('SELECT * FROM property').all() as { id: number }[];
+    reply.send(props.map((p) => ({ ...p, active_task_types: activeTaskTypes(p.id) })));
+  });
+
+  // PATCH /api/admin/properties/:id/task-types — toggle one task type for a property
+  app.patch('/api/admin/properties/:id/task-types', (req, reply) => {
+    const { id } = req.params as { id: string };
+    const body = req.body as { type?: string; enabled?: boolean };
+    if (!body.type || typeof body.enabled !== 'boolean') {
+      return reply.status(400).send({ error: 'type and enabled are required' });
+    }
+    setTaskPref(Number(id), body.type, body.enabled);
+    reply.send({ ok: true, active_task_types: activeTaskTypes(Number(id)) });
   });
 
   // POST /api/admin/properties
@@ -178,6 +201,23 @@ export async function adminRoutes(app: FastifyInstance) {
       default_passcode: null,
       ...body,
     });
+    reply.send({ ok: true });
+  });
+
+  // DELETE /api/admin/properties/:id — remove a property and all of its data
+  // (bookings, their tasks incl. future pending ones, and task prefs).
+  app.delete('/api/admin/properties/:id', (req, reply) => {
+    const { id } = req.params as { id: string };
+    const pid = Number(id);
+    const remove = db.transaction(() => {
+      db.prepare(
+        'DELETE FROM task WHERE booking_id IN (SELECT id FROM booking WHERE property_id = ?)'
+      ).run(pid);
+      db.prepare('DELETE FROM property_task_pref WHERE property_id = ?').run(pid);
+      db.prepare('DELETE FROM booking WHERE property_id = ?').run(pid);
+      db.prepare('DELETE FROM property WHERE id = ?').run(pid);
+    });
+    remove();
     reply.send({ ok: true });
   });
 

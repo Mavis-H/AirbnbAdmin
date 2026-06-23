@@ -47,6 +47,16 @@ export function initSchema() {
       start_date     TEXT NOT NULL,
       end_date       TEXT NOT NULL
     );
+
+    -- Sparse per-property task config: only stores deviations from defaults.
+    -- Standard types active unless a row disables them; optional types active
+    -- only when a row enables them. See src/engine/taskCatalog.ts.
+    CREATE TABLE IF NOT EXISTS property_task_pref (
+      property_id INTEGER NOT NULL REFERENCES property(id),
+      type        TEXT NOT NULL,
+      enabled     INTEGER NOT NULL DEFAULT 1,
+      PRIMARY KEY (property_id, type)
+    );
   `);
 
   // --- Lightweight migrations (for DBs created before a column was added) ---
@@ -65,4 +75,6 @@ export type TaskType =
   | 'inspect'
   | 'check_supplies'
   | 'five_star_review'
-  | 'checkin_checklist';
+  | 'checkin_checklist'
+  // optional (opt-in per property)
+  | 'confirm_if_have_pets';

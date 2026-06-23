@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { get, patch, post, del } from '../lib/api';
-  import { taskLabel } from '../lib/taskLabels';
+  import { taskLabel, STANDARD_TASK_TYPES, OPTIONAL_TASK_TYPES } from '../lib/taskLabels';
   import { formatDate, formatDateTime } from '../lib/format';
   import { t } from '../lib/strings';
 
@@ -17,6 +17,7 @@
   interface Property {
     id: number; name: string; ical_url: string;
     checkin_time: string; checkout_time: string; default_passcode: string | null;
+    active_task_types: string[];
   }
   interface Task {
     id: number; date: string; type: string; status: string; assignee_id: number; assignee_name: string; override: number;
@@ -143,6 +144,26 @@
     } finally {
       syncingId = null;
     }
+  }
+
+  async function deleteProperty(p: Property) {
+    if (!confirm(`「${p.name}」\n${t.admin.confirmDeleteProperty}`)) return;
+    await del(`/api/admin/properties/${p.id}`);
+    if (selectedBooking?.property_id === p.id) closeBooking();
+    if (bookingPropFilter === p.id) bookingPropFilter = null;
+    await reload();
+  }
+
+  // Per-property task config
+  async function toggleTaskType(propertyId: number, type: string, enabled: boolean) {
+    await patch(`/api/admin/properties/${propertyId}/task-types`, { type, enabled });
+    await reload();
+  }
+  function onAddOptional(propertyId: number, e: Event) {
+    const sel = e.currentTarget as HTMLSelectElement;
+    const type = sel.value;
+    sel.value = '';
+    if (type) toggleTaskType(propertyId, type, true);
   }
 
   async function selectBooking(b: Booking) {
@@ -371,12 +392,13 @@
   <section class="property-section">
     <h2>{t.admin.sections.properties}</h2>
     {#each properties as p (p.id)}
-      <div
-        class="property-card"
+      <div class="property-card">
+       <div
+        class="property-edit"
         on:focusin={() => (focusedPropId = p.id)}
         on:focusout={(e) => onPropFocusOut(e, p.id)}
         on:input={() => markPropDirty(p.id)}
-      >
+       >
         <div class="property-grid">
           <label>{t.admin.propName}
             <input bind:value={p.name} />
@@ -404,6 +426,44 @@
           <button class="btn-secondary" on:click={() => syncProperty(p.id)} disabled={syncingId === p.id}>
             {syncingId === p.id ? t.admin.syncing : t.admin.syncIcal}
           </button>
+          <button class="btn-danger delete-prop" on:click={() => deleteProperty(p)}>
+            {t.admin.deleteProperty}
+          </button>
+        </div>
+       </div>
+
+        <div class="task-config">
+          <h4>{t.admin.taskConfig}</h4>
+          <div class="task-checks">
+            {#each STANDARD_TASK_TYPES as type}
+              <label class="task-check">
+                <input
+                  type="checkbox"
+                  checked={p.active_task_types.includes(type)}
+                  on:change={(e) => toggleTaskType(p.id, type, e.currentTarget.checked)}
+                />
+                {taskLabel(type)}
+              </label>
+            {/each}
+            {#each OPTIONAL_TASK_TYPES.filter((ty) => p.active_task_types.includes(ty)) as type}
+              <label class="task-check optional">
+                <input
+                  type="checkbox"
+                  checked
+                  on:change={(e) => toggleTaskType(p.id, type, e.currentTarget.checked)}
+                />
+                {taskLabel(type)}
+              </label>
+            {/each}
+          </div>
+          {#if OPTIONAL_TASK_TYPES.some((ty) => !p.active_task_types.includes(ty))}
+            <select class="add-optional" on:change={(e) => onAddOptional(p.id, e)}>
+              <option value="">{t.admin.addOptional}</option>
+              {#each OPTIONAL_TASK_TYPES.filter((ty) => !p.active_task_types.includes(ty)) as type}
+                <option value={type}>{taskLabel(type)}</option>
+              {/each}
+            </select>
+          {/if}
         </div>
       </div>
     {/each}
@@ -560,7 +620,21 @@
     display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
     gap: 0.6rem; margin-bottom: 0.75rem;
   }
-  .property-actions { display: flex; gap: 0.5rem; }
+  .property-actions { display: flex; gap: 0.5rem; align-items: center; }
+  .delete-prop { margin-left: auto; }
+
+  .task-config { border-top: 1px dashed #e5e5e5; margin-top: 1rem; padding-top: 0.75rem; }
+  .task-config h4 { font-size: 0.85rem; color: #666; margin: 0 0 0.5rem; }
+  .task-checks {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 0.35rem 0.75rem;
+  }
+  .task-check {
+    flex-direction: row; align-items: center; gap: 0.4rem;
+    font-size: 0.85rem; font-weight: 400; color: #444; cursor: pointer;
+  }
+  .task-check input { width: auto; padding: 0; border: 0; border-radius: 0; flex-shrink: 0; }
+  .task-check.optional { color: #FF5A5F; font-weight: 500; }
+  .add-optional { margin-top: 0.6rem; cursor: pointer; }
   .btn-secondary {
     background: #f0f0f0; color: #444; border: none;
     padding: 0.5rem 1rem; border-radius: 6px; cursor: pointer;

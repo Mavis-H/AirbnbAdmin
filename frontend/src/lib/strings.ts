@@ -60,6 +60,11 @@ export const t = {
     passcodePh: '例如 135790',
     syncIcal: '同步 iCal',
     syncing: '同步中…',
+    deleteProperty: '删除房源',
+    confirmDeleteProperty: '将一并删除其预订和未完成的任务，确定删除该房源吗？',
+    // task config
+    taskConfig: '任务设置',
+    addOptional: '+ 添加可选任务',
     addProperty: '+ 添加房源',
     addPropertyTitle: '添加房源',
     addPropertyBtn: '添加房源',

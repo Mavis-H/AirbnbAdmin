@@ -1,5 +1,18 @@
 import db from '../db/client.js';
 import type { TaskType } from '../db/schema.js';
+import {
+  TASK_CATALOG,
+  catalogByType,
+  OPTIONAL_TYPES,
+  isTypeActive,
+} from './taskCatalog.js';
+
+function loadPrefs(propertyId: number): Map<string, number> {
+  const rows = db
+    .prepare('SELECT type, enabled FROM property_task_pref WHERE property_id = ?')
+    .all(propertyId) as { type: string; enabled: number }[];
+  return new Map(rows.map((r) => [r.type, r.enabled]));
+}
 
 interface Booking {
   id: number;
@@ -23,6 +36,16 @@ interface Takeover {
 
 function dateOf(timestamp: string): string {
   return timestamp.slice(0, 10);
+}
+
+function shiftDate(dateStr: string, days: number): string {
+  const d = new Date(dateStr + 'T00:00:00Z');
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+function todayDateStr(): string {
+  return new Date().toISOString().slice(0, 10);
 }
 
 function resolveAssignee(
@@ -84,19 +107,23 @@ export function generateTasksForBooking(bookingId: number) {
 
   const takeovers = db.prepare('SELECT * FROM takeover').all() as Takeover[];
 
+  // Per-property task config: gate every task by whether its type is active here.
+  const prefs = loadPrefs(booking.property_id);
+  const act = (type: string) => isTypeActive(type, prefs);
+
   const checkoutDate = dateOf(booking.checkout_at);
   const checkinDate = dateOf(booking.checkin_at);
 
   // --- Checkout-day tasks (on-site → member) ---
   const memberOnCheckout = resolveAssignee(checkoutDate, memberPerson.id, takeovers);
-  insertTask(bookingId, memberOnCheckout, checkoutDate, 'lockbox_return');
-  insertTask(bookingId, memberOnCheckout, checkoutDate, 'battery_swap');
-  insertTask(bookingId, memberOnCheckout, checkoutDate, 'clean');
-  insertTask(bookingId, memberOnCheckout, checkoutDate, 'inspect');
-  insertTask(bookingId, memberOnCheckout, checkoutDate, 'check_supplies');
+  if (act('lockbox_return')) insertTask(bookingId, memberOnCheckout, checkoutDate, 'lockbox_return');
+  if (act('battery_swap'))   insertTask(bookingId, memberOnCheckout, checkoutDate, 'battery_swap');
+  if (act('clean'))          insertTask(bookingId, memberOnCheckout, checkoutDate, 'clean');
+  if (act('inspect'))        insertTask(bookingId, memberOnCheckout, checkoutDate, 'inspect');
+  if (act('check_supplies')) insertTask(bookingId, memberOnCheckout, checkoutDate, 'check_supplies');
 
   // Five-star review → admin, on checkout day
-  insertTask(bookingId, adminPerson.id, checkoutDate, 'five_star_review');
+  if (act('five_star_review')) insertTask(bookingId, adminPerson.id, checkoutDate, 'five_star_review');
 
   // Admin prep tasks for the NEXT guest → on checkout day, only if there is a next booking.
   // lock_code_change (set temp code) and fill_booking_info (enter guest name/notes) always
@@ -109,26 +136,102 @@ export function generateTasksForBooking(bookingId: number) {
   `).get(booking.property_id, booking.checkout_at) as { id: number } | undefined;
 
   if (nextBooking) {
-    insertTask(nextBooking.id, adminPerson.id, checkoutDate, 'lock_code_change');
-    insertTask(nextBooking.id, adminPerson.id, checkoutDate, 'fill_booking_info');
+    if (act('lock_code_change'))  insertTask(nextBooking.id, adminPerson.id, checkoutDate, 'lock_code_change');
+    if (act('fill_booking_info')) insertTask(nextBooking.id, adminPerson.id, checkoutDate, 'fill_booking_info');
   }
 
   // --- Check-in day tasks (admin only) ---
-  insertTask(bookingId, adminPerson.id, checkinDate, 'checkin_checklist');
+  if (act('checkin_checklist')) insertTask(bookingId, adminPerson.id, checkinDate, 'checkin_checklist');
+
+  // --- Optional tasks (opt-in per property; generated generically) ---
+  const today = todayDateStr();
+  for (const type of OPTIONAL_TYPES) {
+    if (!act(type)) continue;
+    const def = catalogByType.get(type)!;
+    let date: string;
+    if (def.leadDays != null) {
+      // `leadDays` before check-in, but never earlier than today. ISO dates
+      // compare lexicographically, so `>` gives the later date.
+      const lead = shiftDate(checkinDate, -def.leadDays);
+      date = lead > today ? lead : today;
+    } else {
+      date = def.timing === 'checkin' ? checkinDate : checkoutDate;
+    }
+    const basePerson = def.role === 'admin' ? adminPerson.id : memberPerson.id;
+    const assignee = resolveAssignee(date, basePerson, takeovers);
+    insertTask(bookingId, assignee, date, type as TaskType);
+  }
 }
 
 // Called by sync when a brand-new booking is detected — reminds admin (dated today) to
 // set up the temp code and fill in the booking's guest name / notes. Deduped, so it's a
 // no-op if these tasks already exist.
 export function createNewBookingAdminTasks(bookingId: number, todayDate: string) {
+  const booking = db
+    .prepare('SELECT property_id FROM booking WHERE id = ?')
+    .get(bookingId) as { property_id: number } | undefined;
+  if (!booking) return;
+
   const adminPerson = db
     .prepare("SELECT id FROM person WHERE role = 'admin' LIMIT 1")
     .get() as Person | undefined;
 
   if (!adminPerson) return;
 
-  insertTask(bookingId, adminPerson.id, todayDate, 'lock_code_change');
-  insertTask(bookingId, adminPerson.id, todayDate, 'fill_booking_info');
+  const prefs = loadPrefs(booking.property_id);
+  if (isTypeActive('lock_code_change', prefs))
+    insertTask(bookingId, adminPerson.id, todayDate, 'lock_code_change');
+  if (isTypeActive('fill_booking_info', prefs))
+    insertTask(bookingId, adminPerson.id, todayDate, 'fill_booking_info');
+}
+
+// The assignee the engine would pick for a task (default-by-role → takeover swap),
+// ignoring any manual override. Used to decide whether a manual pick is actually a
+// deviation (override=1) or just the default again (override=0).
+export function computeDefaultAssignee(type: string, date: string): number | null {
+  const def = catalogByType.get(type);
+  if (!def) return null;
+  const person = db
+    .prepare('SELECT id FROM person WHERE role = ? LIMIT 1')
+    .get(def.role) as { id: number } | undefined;
+  if (!person) return null;
+  const takeovers = db.prepare('SELECT * FROM takeover').all() as Takeover[];
+  return resolveAssignee(date, person.id, takeovers);
+}
+
+// --- Per-property task config (used by the admin Properties UI) ---
+
+// The full set of task types currently active for a property (standard minus
+// disabled, plus enabled optional), in catalog order.
+export function activeTaskTypes(propertyId: number): string[] {
+  const prefs = loadPrefs(propertyId);
+  return TASK_CATALOG.filter((d) => isTypeActive(d.type, prefs)).map((d) => d.type);
+}
+
+// Enable/disable a task type for a property, then reconcile existing tasks:
+// enabling regenerates; disabling removes the type's *pending* tasks (keeps done).
+export function setTaskPref(propertyId: number, type: string, enabled: boolean) {
+  if (!catalogByType.has(type)) throw new Error(`Unknown task type: ${type}`);
+
+  db.prepare(`
+    INSERT INTO property_task_pref (property_id, type, enabled)
+    VALUES (?, ?, ?)
+    ON CONFLICT(property_id, type) DO UPDATE SET enabled = excluded.enabled
+  `).run(propertyId, type, enabled ? 1 : 0);
+
+  const bookings = db
+    .prepare('SELECT id FROM booking WHERE property_id = ?')
+    .all(propertyId) as { id: number }[];
+
+  if (enabled) {
+    for (const b of bookings) generateTasksForBooking(b.id);
+  } else {
+    db.prepare(`
+      DELETE FROM task
+      WHERE type = ? AND status = 'pending'
+        AND booking_id IN (SELECT id FROM booking WHERE property_id = ?)
+    `).run(type, propertyId);
+  }
 }
 
 export function generateAllTasks() {
