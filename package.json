@@ -7,6 +7,7 @@
     "dev": "tsx watch src/server.ts",
     "start": "tsx src/server.ts",
     "sync": "tsx src/ical/sync.ts",
+    "notify:test": "tsx src/notifications/test-send.ts",
     "seed": "tsx src/db/seed.ts",
     "build": "tsc --noEmit"
   },

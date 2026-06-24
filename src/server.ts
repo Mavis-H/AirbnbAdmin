@@ -4,7 +4,15 @@ import cron from 'node-cron';
 import { initSchema } from './db/schema.js';
 import { planRoutes } from './routes/plan.js';
 import { adminRoutes } from './routes/admin.js';
+import { wecomRoutes } from './routes/wecom.js';
 import { syncAllProperties } from './ical/sync.js';
+
+// Load .env (WeCom creds + callback token/key) if present (Node native).
+try {
+  process.loadEnvFile();
+} catch {
+  /* no .env file — rely on shell environment */
+}
 
 const app = Fastify({ logger: true });
 
@@ -14,6 +22,7 @@ initSchema();
 
 await app.register(planRoutes);
 await app.register(adminRoutes);
+await app.register(wecomRoutes);
 
 app.get('/health', async () => ({ ok: true }));
 
