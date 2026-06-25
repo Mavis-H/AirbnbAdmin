@@ -96,6 +96,95 @@ export async function adminRoutes(app: FastifyInstance) {
     reply.send({ ok: true });
   });
 
+  // --- People (members & notification setup) ---
+
+  // GET /api/admin/persons — includes notify_method + notify_enabled
+  // (the plain /api/persons omits both)
+  app.get('/api/admin/persons', (_req, reply) => {
+    const rows = db
+      .prepare(
+        'SELECT id, name, role, notify_method, notify_enabled FROM person ORDER BY role ASC, id ASC',
+      )
+      .all();
+    reply.send(rows);
+  });
+
+  // POST /api/admin/persons — add a person. notify_method is the WeCom UserID;
+  // notify_enabled toggles whether they receive the daily push.
+  app.post('/api/admin/persons', (req, reply) => {
+    const body = req.body as {
+      name?: string;
+      role?: string;
+      notify_method?: string;
+      notify_enabled?: boolean;
+    };
+    if (!body.name || (body.role !== 'admin' && body.role !== 'member')) {
+      return reply.status(400).send({ error: 'name and role (admin|member) are required' });
+    }
+    const result = db
+      .prepare(
+        'INSERT INTO person (name, role, notify_method, notify_enabled) VALUES (?, ?, ?, ?)',
+      )
+      .run(
+        body.name,
+        body.role,
+        (body.notify_method || '').trim() || 'none',
+        body.notify_enabled === false ? 0 : 1,
+      );
+    reply.send({ id: result.lastInsertRowid });
+  });
+
+  // PATCH /api/admin/persons/:id — edit name / role / notify_method / notify_enabled
+  app.patch('/api/admin/persons/:id', (req, reply) => {
+    const { id } = req.params as { id: string };
+    const body = req.body as {
+      name?: string;
+      role?: string;
+      notify_method?: string;
+      notify_enabled?: boolean;
+    };
+    if (body.role !== undefined && body.role !== 'admin' && body.role !== 'member') {
+      return reply.status(400).send({ error: 'role must be admin or member' });
+    }
+    db.prepare(`
+      UPDATE person
+      SET name           = COALESCE(@name, name),
+          role           = COALESCE(@role, role),
+          notify_method  = COALESCE(@notify_method, notify_method),
+          notify_enabled = COALESCE(@notify_enabled, notify_enabled)
+      WHERE id = @id
+    `).run({
+      id: Number(id),
+      name: body.name ?? null,
+      role: body.role ?? null,
+      // empty string clears the UserID back to 'none'; undefined leaves it unchanged
+      notify_method:
+        body.notify_method !== undefined ? body.notify_method.trim() || 'none' : null,
+      notify_enabled:
+        body.notify_enabled !== undefined ? (body.notify_enabled ? 1 : 0) : null,
+    });
+    reply.send({ ok: true });
+  });
+
+  // DELETE /api/admin/persons/:id — blocked while referenced by tasks or takeovers
+  app.delete('/api/admin/persons/:id', (req, reply) => {
+    const { id } = req.params as { id: string };
+    const pid = Number(id);
+    const tasks = (
+      db.prepare('SELECT COUNT(*) AS c FROM task WHERE assignee_id = ?').get(pid) as { c: number }
+    ).c;
+    const takeovers = (
+      db
+        .prepare('SELECT COUNT(*) AS c FROM takeover WHERE from_person_id = ? OR to_person_id = ?')
+        .get(pid, pid) as { c: number }
+    ).c;
+    if (tasks > 0 || takeovers > 0) {
+      return reply.status(409).send({ error: 'in_use', tasks, takeovers });
+    }
+    db.prepare('DELETE FROM person WHERE id = ?').run(pid);
+    reply.send({ ok: true });
+  });
+
   // --- Takeovers ---
 
   // GET /api/admin/takeovers

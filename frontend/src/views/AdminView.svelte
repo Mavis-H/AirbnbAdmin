@@ -13,7 +13,7 @@
     id: number; from_person_id: number; to_person_id: number;
     start_date: string; end_date: string; from_name: string; to_name: string;
   }
-  interface Person { id: number; name: string; role: string; }
+  interface Person { id: number; name: string; role: string; notify_method: string; notify_enabled: boolean; }
   interface Property {
     id: number; name: string; ical_url: string;
     checkin_time: string; checkout_time: string; default_passcode: string | null;
@@ -25,12 +25,13 @@
   }
 
   // Side-nav: which management section is showing
-  type Section = 'bookings' | 'takeovers' | 'properties';
+  type Section = 'bookings' | 'takeovers' | 'properties' | 'people';
   let section: Section = 'bookings';
   const sections: { id: Section; label: string }[] = [
     { id: 'bookings', label: t.admin.sections.bookings },
     { id: 'takeovers', label: t.admin.sections.takeovers },
     { id: 'properties', label: t.admin.sections.properties },
+    { id: 'people', label: t.admin.sections.people },
   ];
 
   let bookings: Booking[] = [];
@@ -76,6 +77,24 @@
   let showTakeoverForm = false;
   let toForm = { from_person_id: '', to_person_id: '', start_date: '', end_date: '' };
 
+  // People (notification setup) edit state
+  let dirtyPersonIds = new Set<number>();
+  let focusedPersonId: number | null = null;
+  let personSavedFlashId: number | null = null;
+  let showNewPerson = false;
+  let newPerson = { name: '', role: 'member', notify_method: '', notify_enabled: true };
+
+  function markPersonDirty(id: number) {
+    dirtyPersonIds.add(id);
+    dirtyPersonIds = dirtyPersonIds;
+  }
+  function onPersonFocusOut(e: FocusEvent, id: number) {
+    const card = e.currentTarget as HTMLElement;
+    if (!card.contains(e.relatedTarget as Node | null) && focusedPersonId === id) {
+      focusedPersonId = null;
+    }
+  }
+
   function markPropDirty(id: number) {
     dirtyPropIds.add(id);
     dirtyPropIds = dirtyPropIds;
@@ -98,12 +117,61 @@
   });
 
   async function reload() {
-    [bookings, takeovers, persons, properties] = await Promise.all([
+    const [bk, tk, ppl, props] = await Promise.all([
       get<Booking[]>('/api/admin/bookings'),
       get<Takeover[]>('/api/admin/takeovers'),
-      get<Person[]>('/api/persons'),
+      get<Person[]>('/api/admin/persons'),
       get<Property[]>('/api/admin/properties'),
     ]);
+    bookings = bk;
+    takeovers = tk;
+    properties = props;
+    // Show 'none' as an empty field; the backend re-normalizes empty → 'none' on save.
+    // notify_enabled comes back as 0/1 — coerce to a boolean for the toggle.
+    persons = ppl.map((p) => ({
+      ...p,
+      notify_method: p.notify_method === 'none' ? '' : p.notify_method,
+      notify_enabled: !!p.notify_enabled,
+    }));
+  }
+
+  async function savePerson(p: Person) {
+    await patch(`/api/admin/persons/${p.id}`, {
+      name: p.name,
+      role: p.role,
+      notify_method: p.notify_method,
+      notify_enabled: p.notify_enabled,
+    });
+    dirtyPersonIds.delete(p.id);
+    dirtyPersonIds = dirtyPersonIds;
+    await reload();
+    personSavedFlashId = p.id;
+    setTimeout(() => {
+      if (personSavedFlashId === p.id) personSavedFlashId = null;
+    }, 2000);
+  }
+
+  async function addPerson() {
+    await post('/api/admin/persons', {
+      name: newPerson.name,
+      role: newPerson.role,
+      notify_method: newPerson.notify_method,
+      notify_enabled: newPerson.notify_enabled,
+    });
+    newPerson = { name: '', role: 'member', notify_method: '', notify_enabled: true };
+    showNewPerson = false;
+    await reload();
+  }
+
+  async function deletePerson(p: Person) {
+    if (!confirm(`「${p.name}」\n${t.admin.confirmDeletePerson}`)) return;
+    try {
+      await del(`/api/admin/persons/${p.id}`);
+    } catch {
+      alert(t.admin.personInUse);
+      return;
+    }
+    await reload();
   }
 
   async function saveProperty(p: Property) {
@@ -500,6 +568,84 @@
     {/if}
   </section>
   {/if}
+
+  {#if section === 'people'}
+  <!-- People / notification setup -->
+  <section class="people-section">
+    <h2>{t.admin.sections.people}</h2>
+    <p class="hint">{t.admin.peopleHint}</p>
+    {#each persons as p (p.id)}
+      <div
+        class="person-card"
+        on:focusin={() => (focusedPersonId = p.id)}
+        on:focusout={(e) => onPersonFocusOut(e, p.id)}
+        on:input={() => markPersonDirty(p.id)}
+      >
+        <div class="person-grid">
+          <label>{t.admin.personName}
+            <input bind:value={p.name} />
+          </label>
+          <label>{t.admin.personRole}
+            <select bind:value={p.role} on:change={() => markPersonDirty(p.id)}>
+              <option value="admin">{t.admin.roleAdmin}</option>
+              <option value="member">{t.admin.roleMember}</option>
+            </select>
+          </label>
+          <label>{t.admin.wecomUserId}
+            <input bind:value={p.notify_method} placeholder={t.admin.wecomUserIdPh} />
+          </label>
+        </div>
+        <label class="notify-toggle">
+          <input type="checkbox" bind:checked={p.notify_enabled} on:change={() => markPersonDirty(p.id)} />
+          {t.admin.notifyEnabled}
+        </label>
+        <div class="person-actions">
+          {#if dirtyPersonIds.has(p.id) || focusedPersonId === p.id || personSavedFlashId === p.id}
+            <button class="btn-primary" on:click={() => savePerson(p)} disabled={!dirtyPersonIds.has(p.id)}>
+              {t.admin.save}
+            </button>
+            {#if personSavedFlashId === p.id}<span class="saved-flash">{t.admin.saved}</span>{/if}
+          {/if}
+          <button class="btn-danger delete-prop" on:click={() => deletePerson(p)}>
+            {t.admin.deletePerson}
+          </button>
+        </div>
+      </div>
+    {/each}
+
+    {#if showNewPerson}
+      <h3>{t.admin.addPersonTitle}</h3>
+      <div class="person-card">
+        <div class="person-grid">
+          <label>{t.admin.personName}
+            <input bind:value={newPerson.name} placeholder={t.admin.personNamePh} />
+          </label>
+          <label>{t.admin.personRole}
+            <select bind:value={newPerson.role}>
+              <option value="admin">{t.admin.roleAdmin}</option>
+              <option value="member">{t.admin.roleMember}</option>
+            </select>
+          </label>
+          <label>{t.admin.wecomUserId}
+            <input bind:value={newPerson.notify_method} placeholder={t.admin.wecomUserIdPh} />
+          </label>
+        </div>
+        <label class="notify-toggle">
+          <input type="checkbox" bind:checked={newPerson.notify_enabled} />
+          {t.admin.notifyEnabled}
+        </label>
+        <div class="person-actions">
+          <button class="btn-primary" on:click={addPerson} disabled={!newPerson.name}>
+            {t.admin.addPersonBtn}
+          </button>
+          <button class="btn-secondary" on:click={() => (showNewPerson = false)}>{t.admin.cancel}</button>
+        </div>
+      </div>
+    {:else}
+      <button class="btn-add" on:click={() => (showNewPerson = true)}>{t.admin.addPerson}</button>
+    {/if}
+  </section>
+  {/if}
   </div>
 </div>
 
@@ -648,4 +794,23 @@
     font-size: 0.9rem; font-weight: 600; margin-top: 0.5rem;
   }
   .btn-add:hover { background: #fff5f5; }
+
+  .people-section h2 { font-size: 1rem; margin-bottom: 0.25rem; color: #444; }
+  .people-section h3 { font-size: 0.9rem; margin: 1.25rem 0 0.5rem; color: #666; }
+  .people-section .hint { font-size: 0.85rem; color: #888; margin: 0 0 0.75rem; }
+  .person-card {
+    background: white; border: 1px solid #e0e0e0; border-radius: 8px;
+    padding: 1rem; margin-bottom: 0.75rem;
+  }
+  .person-grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 0.6rem; margin-bottom: 0.75rem;
+  }
+  .person-actions { display: flex; gap: 0.5rem; align-items: center; }
+  .notify-toggle {
+    flex-direction: row; align-items: center; gap: 0.45rem;
+    font-size: 0.9rem; font-weight: 500; color: #444; cursor: pointer;
+    margin-bottom: 0.75rem;
+  }
+  .notify-toggle input { width: auto; padding: 0; border: 0; border-radius: 0; flex-shrink: 0; }
 </style>

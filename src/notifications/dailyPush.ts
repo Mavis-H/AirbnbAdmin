@@ -24,7 +24,8 @@ interface TaskRow {
 }
 
 const peopleStmt = db.prepare(
-  `SELECT id, name, notify_method FROM person WHERE notify_method != 'none'`,
+  `SELECT id, name, notify_method FROM person
+   WHERE notify_enabled = 1 AND notify_method NOT IN ('none', '')`,
 );
 
 const tasksStmt = db.prepare(`

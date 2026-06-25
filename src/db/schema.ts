@@ -64,6 +64,13 @@ export function initSchema() {
   if (!taskCols.some((c) => c.name === 'note')) {
     db.exec('ALTER TABLE task ADD COLUMN note TEXT');
   }
+
+  // notify_enabled: per-person push on/off toggle, independent of the stored
+  // WeCom UserID (so you can pause notifications without losing the ID).
+  const personCols = db.prepare('PRAGMA table_info(person)').all() as { name: string }[];
+  if (!personCols.some((c) => c.name === 'notify_enabled')) {
+    db.exec('ALTER TABLE person ADD COLUMN notify_enabled INTEGER NOT NULL DEFAULT 1');
+  }
 }
 
 export type TaskType =
