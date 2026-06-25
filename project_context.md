@@ -55,7 +55,7 @@ Deployment note: serving `/admin` directly (or on refresh) needs the prod server
 - Database: SQLite via `better-sqlite3`
 - Scheduling: `node-cron` (only truly enabled after deployment)
 - Frontend: Svelte + Vite; two views — the this-week plan page and the admin forms; `manifest.json` + service worker for PWA
-- Notifications: abstracted behind a single `sendNotification()` interface; this phase = `console.log`; deployment phase = WeCom `qyapi.weixin.qq.com`
+- Notifications: abstracted behind a single `sendNotification()` interface; console stub for local dev, real WeCom `qyapi.weixin.qq.com` send when configured (Phase 3 — done; see below)
 - Language: **Chinese-only UI** (single language, no toggle — fixed audience). All UI strings centralized in [frontend/src/lib/strings.ts](frontend/src/lib/strings.ts); task-type labels in [frontend/src/lib/taskLabels.ts](frontend/src/lib/taskLabels.ts). Dates/times render via the `zh-CN` locale, 24-hour clock. Person names stay as-is (admin = "Mavis & Andy", member = "Mom & Dad"); role labels aren't shown in the member view.
 
 ---
@@ -170,7 +170,7 @@ Both roles can view the plan page (filterable by assignee). `is_app_user` flag r
 - [x] PWA basics (manifest + service worker); service workers are allowed on `localhost` without HTTPS, so "Add to Home Screen" can be verified locally
 
 ### Out of scope this phase:
-- Real WeCom push (needs a public IP + trusted-IP whitelist — deferred to deployment)
+- ~~Real WeCom push (needs a public IP + trusted-IP whitelist — deferred to deployment)~~ → **done in Phase 3** (see below): `sendNotification()` now calls the WeCom API when configured, falling back to the console stub otherwise.
 - ~~Real cron scheduling~~ → a daily `node-cron` job (04:00) now calls `syncAllProperties` in [src/server.ts](src/server.ts). It only fires while the server process is up, so *truly* always-on daily sync still needs the Phase 3 deployment; manual per-property "Sync" remains available anytime. `syncAllProperties` isolates per-property failures so one bad iCal URL won't abort the rest.
 - Any server / domain / HTTPS / VPS configuration
 
@@ -198,14 +198,46 @@ Each property controls which task types it generates, via a **catalog** of types
 - **API**: `GET /api/admin/properties` returns `active_task_types` per property; `PATCH /api/admin/properties/:id/task-types {type, enabled}` toggles one.
 - **UI**: each property card has a 任务设置 subsection — checkboxes for the 9 standard types + an "add optional" dropdown for opt-in types. A 删除房源 button hard-deletes the property (`DELETE /api/admin/properties/:id`) — cascading its bookings, their tasks (incl. future pending), and task prefs in one transaction.
 
+## Phase 3 — WeCom push + deployment — ✅ Code done, deployment pending
+
+**All code is complete, typechecked, and validated against the real WeCom app.** What remains is the user's infrastructure work, captured in the runbook [DEPLOY.md](DEPLOY.md). Target: **https://airbnbadmin.tohacking.com** on a DigitalOcean droplet (`64.225.32.220`).
+
+### Real WeCom (企业微信) push
+- [src/notifications/wecom.ts](src/notifications/wecom.ts): WeCom client — cached `access_token` (~2h) + `sendWecomText`, native `fetch`, no deps. `isWecomConfigured()` gates on the env creds.
+- [src/notifications/index.ts](src/notifications/index.ts): `sendNotification()` is now async — skips people with no UserID, falls back to the console stub when creds are absent (local dev), else sends via WeCom. Throws on failure so batch callers isolate per-person.
+- **Secrets** live in a git-ignored `.env` (`*.env`). **`.env.example` is tracked — placeholders only.** Vars: `WECOM_CORP_ID`, `WECOM_AGENT_ID`, `WECOM_SECRET`, `WECOM_TOKEN`, `WECOM_AES_KEY`.
+
+### Callback endpoint (接收消息服务器URL)
+- [src/routes/wecom.ts](src/routes/wecom.ts) + [src/notifications/wecomCrypto.ts](src/notifications/wecomCrypto.ts): `GET/POST /wecom/callback` implements the WXBizMsgCrypt handshake (SHA1 verify + AES-256-CBC decrypt of `echostr`). This only exists to clear the **企业可信IP** prerequisite (WeCom requires a trusted-domain *or* a message-receiving URL before trusted-IP config). Validated locally via a free `cloudflared` quick tunnel — the URL path `/wecom/callback` is required.
+
+### Daily push job
+- [src/notifications/dailyPush.ts](src/notifications/dailyPush.ts): `sendDailyPush()` reads each person's pending tasks for the day (effective assignee already on `task.assignee_id`) and sends one Chinese message grouped by property. Gated on `notify_enabled=1 AND notify_method NOT IN ('none','')`. Per-person failures isolated.
+- Cron in [src/server.ts](src/server.ts): `PUSH_CRON` (default `0 7 * * *`) + `PUSH_TZ` (IANA, falls back to server-local). `npm run push:test [-- YYYY-MM-DD] [--dry]` for preview.
+- [src/engine/taskLabels.ts](src/engine/taskLabels.ts) mirrors the frontend label map.
+
+### Production frontend serving + config
+- [src/server.ts](src/server.ts): when `NODE_ENV=production`, `@fastify/static` serves `frontend/dist` with a `setNotFoundHandler` → `index.html` fallback so client routes (`/admin`) survive refresh; `/api` and `/wecom` still return JSON 404. (This was the deferred Phase 1 deployment task.)
+- `CORS_ORIGIN` + `PORT` are now env-driven; dev defaults unchanged.
+
+### People (成员) admin section
+- New admin side-nav section to manage people: **name / role / WeCom UserID** + a per-person **接收每日推送** toggle (`notify_enabled`) — so notifications can be paused without losing the UserID.
+- Schema: `person.notify_enabled` (INTEGER, default 1) via lightweight migration in [src/db/schema.ts](src/db/schema.ts).
+- API: `GET/POST/PATCH/DELETE /api/admin/persons` ([src/routes/admin.ts](src/routes/admin.ts)); DELETE returns 409 while the person is referenced by tasks or takeovers.
+- This is how parents' real UserIDs get set (Phase 3 onboarding) — no DB hand-editing.
+
+### Remaining (user, per DEPLOY.md)
+1. Provision droplet + deploy (Node 26, build, systemd, Caddy auto-HTTPS).
+2. Repoint WeCom 接收消息服务器URL + 企业可信IP to the droplet (whitelist allows multiple IPs).
+3. Onboard parents: add to 通讯录, grab UserIDs, set them in the 成员 section, each scans the **微信插件** QR + enables 接收应用消息.
+- Off-box daily DB backup to a **new private** repo via [deploy/backup-db.sh](deploy/backup-db.sh).
+
 ## Later Phases (reference only — do NOT implement this phase)
 
-- **Phase 3**: wire up the daily WeCom push + a minimal deployment to validate real on-device delivery
 - **Phase 4**: task completion feedback, five-star review reminders, consumables inventory tracking, etc.
 
 ---
 
-## Deployment Notes (for Phase 3 — ignore for now)
+## Deployment Notes (Phase 3 — see [DEPLOY.md](DEPLOY.md) for the full runbook)
 
 - Host: a US VPS (DigitalOcean / Vultr / Linode / Hetzner / Lightsail, ~$5/mo) with a **fixed public IP**
 - WeCom self-built apps **require configuring a "trusted enterprise IP" (企业可信IP) whitelist** — add the VPS IP there. Serverless (rotating IPs) doesn't fit, hence a fixed-IP VPS.
