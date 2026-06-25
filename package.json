@@ -8,6 +8,7 @@
     "start": "tsx src/server.ts",
     "sync": "tsx src/ical/sync.ts",
     "notify:test": "tsx src/notifications/test-send.ts",
+    "push:test": "tsx src/notifications/dailyPush.ts",
     "seed": "tsx src/db/seed.ts",
     "build": "tsc --noEmit"
   },

@@ -6,6 +6,7 @@ import { planRoutes } from './routes/plan.js';
 import { adminRoutes } from './routes/admin.js';
 import { wecomRoutes } from './routes/wecom.js';
 import { syncAllProperties } from './ical/sync.js';
+import { sendDailyPush } from './notifications/dailyPush.js';
 
 // Load .env (WeCom creds + callback token/key) if present (Node native).
 try {
@@ -38,5 +39,23 @@ cron.schedule('0 4 * * *', async () => {
     console.error('[cron] daily iCal sync failed:', err);
   }
 });
+
+// Daily push of each person's tasks (after the 04:00 sync). Time/timezone are
+// env-configurable: PUSH_CRON (default 07:00) + PUSH_TZ (IANA tz for the clock;
+// falls back to server-local). Like sync, this only fires while the process is up.
+const pushCron = process.env.PUSH_CRON ?? '0 7 * * *';
+const pushTz = process.env.PUSH_TZ;
+cron.schedule(
+  pushCron,
+  async () => {
+    console.log('[cron] daily push starting');
+    try {
+      await sendDailyPush();
+    } catch (err) {
+      console.error('[cron] daily push failed:', err);
+    }
+  },
+  pushTz ? { timezone: pushTz } : undefined,
+);
 
 await app.listen({ port: 3000, host: '0.0.0.0' });
