@@ -1,0 +1,21 @@
+# systemd unit for the Airbnb turnover backend.
+# Install to /etc/systemd/system/turnover.service (see DEPLOY.md).
+# Runs the Fastify server (which also serves the built frontend + runs the crons).
+
+[Unit]
+Description=Airbnb turnover coordination app
+After=network.target
+
+[Service]
+Type=simple
+User=turnover
+WorkingDirectory=/opt/AirbnbAdmin
+EnvironmentFile=/opt/AirbnbAdmin/.env
+ExecStart=/usr/bin/npm start
+Restart=always
+RestartSec=5
+# Give the build/runtime a clean PATH that includes the Node install
+Environment=PATH=/usr/bin:/usr/local/bin
+
+[Install]
+WantedBy=multi-user.target

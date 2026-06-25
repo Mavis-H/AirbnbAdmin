@@ -1,0 +1,12 @@
+# Caddy reverse proxy for the Airbnb turnover app.
+# Caddy auto-provisions + renews HTTPS (Let's Encrypt) for this hostname as long
+# as the DNS A record points here and ports 80/443 are open.
+#
+# Add future projects as additional blocks, e.g.:
+#   otherproject.tohacking.com { reverse_proxy localhost:3001 }
+# They won't interfere — each gets its own cert.
+
+airbnbadmin.tohacking.com {
+	encode gzip
+	reverse_proxy localhost:3000
+}
