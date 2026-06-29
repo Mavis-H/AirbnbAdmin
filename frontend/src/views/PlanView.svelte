@@ -14,6 +14,7 @@
     guest_name: string | null; lock_code: string | null; notes: string | null;
     property_name: string; assignee_id: number; assignee_name: string;
     checkin_at: string; checkout_at: string;
+    next_checkin: string | null; days_left: number;
   }
 
   // member → rolling 7-day window anchored on today (slides daily).
@@ -45,7 +46,19 @@
   let loading = true;
   let error = '';
 
-  $: groupedByDay = groupTasks(tasks);
+  // Overdue = still-pending tasks dated before today. Pulled out into their own
+  // section at the top, oldest first; the rest group by day as usual.
+  $: overdueTasks = tasks
+    .filter((t) => t.status === 'pending' && t.date < today())
+    .sort((a, b) => a.date.localeCompare(b.date));
+  $: groupedByDay = groupTasks(tasks.filter((t) => !(t.status === 'pending' && t.date < today())));
+
+  // "Days left until it must be done" badge text for an overdue task.
+  function deadlineBadge(daysLeft: number): string {
+    if (daysLeft > 0) return `还剩 ${daysLeft} 天`;
+    if (daysLeft === 0) return '今天截止';
+    return '已逾期';
+  }
 
   function addDays(s: string, n: number): string {
     if (!s) return '';
@@ -181,9 +194,54 @@
     <p class="msg">{t.plan.loading}</p>
   {:else if error}
     <p class="msg error">{error}</p>
-  {:else if groupedByDay.length === 0}
+  {:else if groupedByDay.length === 0 && overdueTasks.length === 0}
     <p class="msg">{t.plan.empty}</p>
   {:else}
+    {#if overdueTasks.length > 0}
+      <section class="day-group overdue-group">
+        <h2 class="day-header overdue-header">⚠️ 逾期任务</h2>
+        {#each overdueTasks as task}
+          <div
+            class="task-card overdue-card"
+            class:done={task.status === 'done'}
+            class:edge-upcoming={task.days_left > 0}
+            class:edge-urgent={task.days_left < 0}
+          >
+            <div class="task-top">
+              <button
+                class="check"
+                class:checked={task.status === 'done'}
+                title={task.status === 'done' ? t.plan.markUndone : t.plan.markDone}
+                on:click={() => toggleDone(task)}
+              >
+                {task.status === 'done' ? '✓' : ''}
+              </button>
+              <span class="task-type">{taskLabel(task.type)}</span>
+              <span
+                class="deadline-badge"
+                class:upcoming={task.days_left > 0}
+                class:urgent={task.days_left < 0}
+              >
+                {deadlineBadge(task.days_left)}
+              </span>
+            </div>
+            <div class="task-meta">
+              <span class="property">{task.property_name}</span>
+              {#if task.guest_name}
+                <span>· {task.guest_name}</span>
+              {/if}
+              <span class="overdue-date">· {formatDay(task.date)}</span>
+            </div>
+            {#if task.note}
+              <p class="task-note">{task.note}</p>
+            {/if}
+            {#if mode === 'admin'}
+              <div class="assignee">→ {task.assignee_name}{task.override ? ` (${t.plan.manual})` : ''}</div>
+            {/if}
+          </div>
+        {/each}
+      </section>
+    {/if}
     {#each groupedByDay as [day, dayTasks]}
       <section class="day-group">
         <h2 class="day-header">{formatDay(day)}</h2>
@@ -256,6 +314,20 @@
     margin-bottom: 0.5rem; padding-bottom: 0.25rem;
     border-bottom: 2px solid #FF5A5F;
   }
+
+  .overdue-header { border-bottom-color: #E11D48; color: #E11D48; }
+  .overdue-card { border-left: 4px solid #E11D48; } /* 今天截止 — soft red */
+  .overdue-card.edge-upcoming { border-left-color: #EAB308; } /* 还剩 N 天 — yellow */
+  .overdue-card.edge-urgent { border-left-color: #B91C1C; } /* 已逾期 — solid red */
+  .deadline-badge {
+    margin-left: auto; flex-shrink: 0;
+    font-size: 0.75rem; font-weight: 700;
+    background: #FEE2E2; color: #B91C1C; /* 今天截止 — soft red */
+    padding: 0.15rem 0.5rem; border-radius: 999px; white-space: nowrap;
+  }
+  .deadline-badge.upcoming { background: #FEF9C3; color: #854D0E; } /* 还剩 N 天 — yellow */
+  .deadline-badge.urgent { background: #B91C1C; color: white; } /* 已逾期 — solid red */
+  .overdue-date { color: #B91C1C; }
 
   .task-card {
     background: white; border-radius: 10px; padding: 0.9rem 1rem;

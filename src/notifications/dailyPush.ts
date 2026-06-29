@@ -21,6 +21,9 @@ interface TaskRow {
   type: string;
   note: string | null;
   property_name: string;
+  date: string;
+  checkout_at: string;
+  next_checkin: string | null;
 }
 
 const peopleStmt = db.prepare(
@@ -28,13 +31,19 @@ const peopleStmt = db.prepare(
    WHERE notify_enabled = 1 AND notify_method NOT IN ('none', '')`,
 );
 
+// Pull today's tasks AND still-pending overdue ones from the last 7 days, so a
+// missed task keeps getting re-pushed (bounded so a stale backlog ages out).
+// Caller passes (assignee_id, overdueFloor = today-7, today).
 const tasksStmt = db.prepare(`
-  SELECT t.type, t.note, p.name AS property_name
+  SELECT t.type, t.note, t.date, b.checkout_at, p.name AS property_name,
+    (SELECT MIN(nb.checkin_at) FROM booking nb
+     WHERE nb.property_id = b.property_id AND nb.checkin_at > b.checkout_at) AS next_checkin
   FROM task t
   JOIN booking b ON b.id = t.booking_id
   JOIN property p ON p.id = b.property_id
-  WHERE t.assignee_id = ? AND t.date = ? AND t.status = 'pending'
-  ORDER BY p.name ASC, t.type ASC
+  WHERE t.assignee_id = ? AND t.status = 'pending'
+    AND t.date >= ? AND t.date <= ?
+  ORDER BY t.date ASC, p.name ASC, t.type ASC
 `);
 
 /** Today's date (YYYY-MM-DD) in the given IANA timezone, or server-local if unset. */
@@ -58,18 +67,63 @@ function zhDateLabel(dateStr: string): string {
   }).format(d);
 }
 
-/** Build the Chinese message body for one person's tasks, grouped by property. */
-export function buildMessage(dateStr: string, tasks: TaskRow[]): string {
-  const lines: string[] = [`【今日任务 ${zhDateLabel(dateStr)}】`, ''];
+function shiftDate(dateStr: string, days: number): string {
+  const d = new Date(dateStr + 'T00:00:00Z');
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
 
+// Whole days from `from` to `to` (both YYYY-MM-DD); negative if `to` is earlier.
+function daysBetween(from: string, to: string): number {
+  const a = new Date(from + 'T00:00:00Z').getTime();
+  const b = new Date(to + 'T00:00:00Z').getTime();
+  return Math.round((b - a) / 86_400_000);
+}
+
+// "Days left until it must be done" badge for an overdue task. Deadline is the
+// day before the next guest checks in, or checkout+3 when no guest is booked yet.
+function deadlineBadge(task: TaskRow, today: string): string {
+  const deadline = task.next_checkin
+    ? shiftDate(task.next_checkin.slice(0, 10), -1)
+    : shiftDate(task.checkout_at.slice(0, 10), 3);
+  const daysLeft = daysBetween(today, deadline);
+  if (daysLeft > 0) return `还剩 ${daysLeft} 天`;
+  if (daysLeft === 0) return '今天截止';
+  return '已逾期';
+}
+
+/** One property-grouped block of task lines. */
+function taskLines(tasks: TaskRow[], today: string, withBadge: boolean): string[] {
+  const lines: string[] = [];
   let currentProperty = '';
   for (const task of tasks) {
     if (task.property_name !== currentProperty) {
       currentProperty = task.property_name;
       lines.push(`🏠 ${currentProperty}`);
     }
-    lines.push(`· ${taskLabel(task.type)}`);
+    const badge = withBadge ? `（${deadlineBadge(task, today)}）` : '';
+    lines.push(`· ${taskLabel(task.type)}${badge}`);
     if (task.note) lines.push(`  备注：${task.note}`);
+  }
+  return lines;
+}
+
+/**
+ * Build the Chinese message body for one person's tasks. Today's tasks come
+ * first; still-pending overdue tasks follow in a 逾期任务 section, each tagged
+ * with how many days remain until its hard deadline.
+ */
+export function buildMessage(dateStr: string, tasks: TaskRow[]): string {
+  const todays = tasks.filter((t) => t.date === dateStr);
+  const overdue = tasks.filter((t) => t.date < dateStr);
+
+  const lines: string[] = [`【今日任务 ${zhDateLabel(dateStr)}】`, ''];
+  lines.push(...taskLines(todays, dateStr, false));
+
+  if (overdue.length > 0) {
+    if (todays.length > 0) lines.push('');
+    lines.push('⚠️ 逾期任务');
+    lines.push(...taskLines(overdue, dateStr, true));
   }
 
   lines.push('', '请及时处理，谢谢！');
@@ -95,8 +149,10 @@ export async function sendDailyPush(opts: DailyPushOptions = {}): Promise<void> 
   let skipped = 0;
   let failed = 0;
 
+  const sevenDaysAgo = shiftDate(date, -7);
+
   for (const person of people) {
-    const tasks = tasksStmt.all(person.id, date) as TaskRow[];
+    const tasks = tasksStmt.all(person.id, sevenDaysAgo, date) as TaskRow[];
     if (tasks.length === 0) {
       skipped++;
       continue;
