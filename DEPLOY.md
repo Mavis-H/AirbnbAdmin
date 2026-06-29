@@ -146,7 +146,9 @@ Then open **https://airbnbadmin.tohacking.com** and **/admin** in a browser.
 ## 7. Daily DB backup → private repo
 
 One-time setup so the droplet can push backups to a **new private** repo
-`airbnbadmin-backups` (separate from the code repo).
+`AirbnbAdmin-Backup` (separate from the code repo). The local clone lives at
+`/opt/airbnbadmin-backups` (path hardcoded in `backup-db.sh`); the differing
+case/name from the GitHub repo is fine — only the clone URL must match GitHub.
 
 ```bash
 # generate a deploy key ON the droplet
@@ -154,7 +156,7 @@ ssh-keygen -t ed25519 -f /root/.ssh/backup_deploy -N ""
 cat /root/.ssh/backup_deploy.pub
 ```
 
-Add that public key to the **`airbnbadmin-backups`** repo on GitHub:
+Add that public key to the **`AirbnbAdmin-Backup`** repo on GitHub:
 *Settings → Deploy keys → Add deploy key → ✅ Allow write access*.
 
 Tell git to use this key for that repo, then clone + wire the cron:
@@ -168,7 +170,7 @@ Host github-backup
   IdentitiesOnly yes
 EOF
 
-git clone git@github-backup:<your-user>/airbnbadmin-backups.git /opt/airbnbadmin-backups
+git clone git@github-backup:Mavis-H/AirbnbAdmin-Backup.git /opt/airbnbadmin-backups
 cd /opt/airbnbadmin-backups
 git config user.email "backup@tohacking.com"
 git config user.name "droplet backup"
@@ -208,13 +210,50 @@ Then tear down the laptop `cloudflared` tunnel — no longer needed.
 
 ## Redeploying after code changes
 
-```bash
-# on your Mac
-$ git push
+Sections 1–8 are **one-time setup** — never repeat them. Only this section applies
+to future code changes.
 
-# on the droplet
-# cd /opt/AirbnbAdmin && git pull && npm install && (cd frontend && npm install && npm run build)
-# systemctl restart turnover
+**1. On your Mac** — commit + push:
+
+```bash
+$ git push
+```
+
+**2. On the droplet** — pull and apply. What you run depends on *what* changed:
+
+| What you changed | Commands on droplet (in `/opt/AirbnbAdmin`) |
+|---|---|
+| **Backend only** (`src/`) | `git pull` → `systemctl restart turnover` |
+| **Frontend only** (`frontend/src/`) | `git pull` → `cd frontend && npm run build` |
+| **Both** | `git pull` → `cd frontend && npm run build` → `systemctl restart turnover` |
+| **Added/changed a dependency** (`package.json`) | also run `npm install` (root and/or `frontend/`) before the above |
+
+> **Why frontend needs no restart:** the backend serves the prebuilt `frontend/dist`
+> as static files, so once `npm run build` regenerates `dist` the new files are served
+> immediately. A restart only matters for backend (`src/`) changes.
+> **DB migrations** (e.g. new columns) run automatically on startup, so `restart` applies them.
+> **PWA caching:** members' screens are a PWA — after a frontend change they may briefly
+> see the cached old version until the service worker updates (usually next launch).
+
+Safe catch-all (does everything; harmless if some steps are no-ops):
+
+```bash
+cd /opt/AirbnbAdmin && git pull && npm install && (cd frontend && npm install && npm run build)
+chown -R turnover:turnover /opt/AirbnbAdmin   # git pull/npm as root leaves root-owned files
+systemctl restart turnover
+```
+
+**Sanity check after redeploy:**
+
+```bash
+systemctl status turnover           # should be "active (running)"
+curl -s localhost:3000/health       # → {"ok":true}
+```
+
+From your Mac, confirm it's live end-to-end:
+
+```bash
+$ curl -sI https://airbnbadmin.tohacking.com/health   # 200, valid TLS
 ```
 
 ## Troubleshooting
